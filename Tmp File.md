@@ -348,3 +348,88 @@ code ends
 end
 ```
 
+### 实验4 [bx]和 loop 的使用 
+
+​	(1) 编程，向内存 0:200～0:23F 依次传送数据 0～63(3FH)。
+
+​	(2) 编程，向内存0:200～0:23F依次传送数据0～63(3FH)，程序中只能使用9条指令，9条指令中包括“mov ax,4c00h”和“int 21h”。
+
+​	(3) 下面的程序的功能是将“mov ax，4c00h”之前的指令复制到内存 0:200 处，补全程序。上机调试，跟踪运行结果。
+
+```assembly
+assume cs:code
+code segment
+    mov ax,____
+    mov ds,ax
+    mov ax,0020h
+    mov es, ax 
+    mov bx,0
+    mov cx,____
+s:  mov al,[bx]
+    mov es:[bx],al 
+    inc bx 
+    loop s 
+    mov ax,4c00h 
+    int 21h 
+code ends 
+end 
+```
+
+第(3)题提示：
+
+​	①复制的是什么？从哪里到哪里？
+
+​	②复制的是什么？有多少个字节？你如何知道要复制的字节的数量？
+
+---
+
+解析：
+
+(1)(2)编译-连接以下代码，debug加载程序后，可以用 t 命令运行，g 命令跳过 loop，结果如图5.7.2，正好也满足指令在 为 9 条。
+
+```assembly
+assume cs:code
+code segment
+	mov ax,0020h
+	mov ds,ax		;通过ax中介修改段地址寄存器ds
+	mov bx,0		;偏移地址记录
+	mov cx,64		;循环次数计数
+	
+s:  mov ds:[bx],bx	;传送数据
+	inc bx
+	loop s
+	
+	mov ax,4c00h
+	int 21h
+code ends
+end
+```
+
+![5.7.2 Debug加载程序运行结果](文档插图/5.7.2 Debug加载程序运行结果.png)
+
+<center style="color:#C0C0C0">图5.7.2 Debug加载程序运行结果</center>
+
+(3)复制的是“mov ax,4c00h”之前的指令，从 cs:ip 开始复制到 0020:0 开始的内存单元中，可以先把 cx 调大一点，然后调试观察“mov ax,4c00h”指令的位置，从而确定 cx 具体的值。
+
+```assembly
+assume cs:code
+code segment
+    mov ax,cs
+    mov ds,ax
+    mov ax,0020h
+    mov es,ax 
+    mov bx,0
+    mov cx,23
+s:  mov al,[bx]
+    mov es:[bx],al 
+    inc bx 
+    loop s 
+    mov ax,4c00h 
+    int 21h 
+code ends 
+end 
+```
+
+![5.7.3 Debug加载程序运行结果](文档插图/5.7.3 Debug加载程序运行结果.png)
+
+<center style="color:#C0C0C0">图5.7.3 Debug加载程序运行结果</center>
