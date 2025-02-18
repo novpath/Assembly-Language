@@ -1,777 +1,1042 @@
-### 6.1 在代码段中使用数据
+## 第 7 章 更灵活的定位内存地址的方法
 
-​	考虑问题，编程计算以下8个数据的和，结果存在 ax 寄存器中：
+​	前面，我们用[0]、[bx]的方法，在访问内存的指令中，定位内存单元的地址。本章我们主要通过具体的问题来讲解一些更灵活的定位内存地址的方法和相关的编程方法。
 
-​	0123h、0456h、0789h、0abch、 0defh、 0fedh、0cbah、0987h
+### 7.1 and 和 or 指令
 
-​	前面，我们累加的都是某些内存单元中的数据，并不关心数据本身，现在要累加的是已经给定了数值的数据。我们希望可以用循环的方法来进行累加，所以在累加前，要将这些数据存储在一组地址连续的内存单元中。
+首先，介绍两条指令and和or，因为我们下面的例程中要用到它们。
 
-​	我们可以用指令一个一个地将它们送入地址连续的内存单元中，从规范角度来讲应该让 OS 来为我们分配。我们可以在程序中，定义我们希望处理的数据，这些数据就会被编译、连接程序作为程序的一部分写到可执行文件中。当可执行文件中的程序被加载入内存时，这些数据也同时被加载入内存中。与此同时，我们要处理的数据也就自然而然地获得了存储空间，具体做法如下：
+(1) and 指令：**逻辑与指令**，**按位进行与运算**。
 
-**程序 6.1**
+例如指令：
 
 ```assembly
-assume cs: code
-
-code segment
-
-    dw 0123h,0456h,0789h,0abch,0defh,0fedh,0cbah,0987h
-    mov bx,0
-    mov ax,0 
-
-    mov cx,8
-    s: add ax, cs:[bx] 
-    add bx,2
-
-    loop s
-
-    mov ax, 4c00h 
-    int 21h 
-
-code ends 
-
-end
+ mov al,01100011B
+ and al,00111011B
 ```
 
-​	程序第一行中的“dw”的含义是**定义字型数据**。dw 即“define word”。在这里，使用 dw 定义了 8 个字型数据（数据之间以逗号分隔），它们所占的内存空间的大小为16个字节。
+执行后：al=00100011B
 
-​	程序中的指令就要对这 8 个数据进行累加，由于它们在代码段中，程序在运行的时候 CS 中存放代码段的段地址，所以可以从 CS 中得到这 8 个数据的**段地址**。因为用 dw 定义的数据处于代码段的最开始，所以**偏移地址**为 0，这 8 个数据就在代码段的偏移 0、2、4、6、8、A、C、E 处。程序运行时，它们的地址就是 CS:0、CS:2、CS:4、CS:6、CS:8、CS:A、CS:C、CS:E。
+通过该指令可将操作对象的相应位设为 0，其他位不变。例如：
 
-​	程序中，用 bx 存放加  2 递增的偏移地址，用循环来进行累加。在循环开始前，设置(bx)=0，cs:bx 指向第一个数据所在的字单元。每次循环中(bx)=(bx)+2，cs:bx 指向下一个数据所在的字单元。
+将 al 的第 6 位设为 0 的指令是：`and al,10111111B`
 
-​	将程序 6.1 编译、连接为可执行文件 p61.exe，先不要运行，用 Debug 加载查看一下，情况如图 6.1 所示。
+将 al 的第 7 位设为 0 的指令是：`and al,01111111B`
 
-![6.1 用 u 命令从 076A：0000 查看程序](文档插图/6.1 用 u 命令从 076A：0000 查看程序.png)
+将 al 的第 0 位设为 0 的指令是：`and al,11111110B`
 
-<center style="color:#C0C0C0">图6.1 用u命令从076A:0000查看程序</center>
+(2)or 指令：**逻辑或指令，按位进行或运算**。
 
-​	图 6.1 中，通过“DS=075A”，可知程序从 076A:0000 开始存放，但 u 命令却看到了意料之外的指令。
-
-​	虽然没看到程序中的指令，但实际上用 u 命令从 076A:0000 查看到的也是程序中的内容，只不过不是源程序中的汇编指令所对应的机器码，而是源程序中，在汇编指令前面，用 dw 定义的数据。实际上，在程序中，有一个代码段，在代码段中，前面的16个字节是用“dw”定义的数据，从**第 16 个字节开始才是汇编指令所对应的机器码**。
-
-​	可以用 d 命令更清楚地查看程序中前 16 个字节的内容，如图 6.1.2 所示。
-
-![6.1.2 查看程序中前16字节内容](文档插图/6.1.2 查看程序中前16字节内容.png)
-
-<center style="color:#C0C0C0">图6.1.2 查看程序中前16字节内容</center>
-
-​	可以从 076A:0010 查看程序中要执行的机器指令，如图 6.1.3 所示。
-
-![6.1.3 查看程序中的机器指令](文档插图/6.1.3 查看程序中的机器指令.png)
-
-<center style="color:#C0C0C0">图6.1.3 查看程序中的机器指令</center>
-
-​	从图 6.1.2 和 6.1.3 中，我们可以看到程序加载到内存中后，所占内存空间的前16个单元存放在源程序中用“dw”定义的数据，后面的单元存放源程序中汇编指令所对应的机器指令。
-
-​	用 Debug 加载后，可以将 IP 设置为 10h，从而使 CS:IP 指向程序中的第一条指令。然后再用 t 命令、p 命令，或者是 g 命令执行。
-
-​	可是这样一来，我们就必须用Debug来执行程序。程序 6.1 编译、连接成可执行文件后，在系统中直接运行可能会出现问题，因为**程序的入口处不是我们所希望执行的指令**。为了让这个程序在编译、连接后可以在系统中直接运行呢，我们可以在源程序中指明程序的入口所在，具体做法如下。
-
-**程序 6.2** 
+例如指令： 
 
 ```assembly
-assume cs:code
-
-code segment
-dw 0123h, 0456h, 0789h, 0abch, 0defh, 0fedh, 0cbah, 0987h 
-start:	mov bx,0 
-        mov ax,0 
-
-        mov cx,8 
-S:		add ax, cs:[bx]
-		add bx,2
-		loop s 
-		
-		mov ax,4c00h
-		int 21h 
-code ends 
-
-end start
+mov al,01100011B
+or al,00111011B
 ```
 
-​	注意在程序 6.2 中第一条指令的前面加上了一个**标号 start**，而这个标号在伪指令 end 的后面出现。这里，我们要再次探讨end的作用。end 除了通知编译器程序结束外，还可以**通知编译器程序的入口在什么地方**。在程序 6.2 中我们用 end 指令指明了程序的入口在标号 start 处，也就是说，“mov bx,0”是程序的第一条指令。
+执行后：al=01111011B
 
-​	在前面的课程中（参见 4.8 节），我们已经知道在**单任务系统**中，可执行文件中的程序执行过程如下。
+通过该指令可将操作对象的相应位设为1，其他位不变。例如：
 
-​	(1)由其他的程序（Debug、command 或其他程序）将可执行文件中的程序加载入内存；
+将 al 的第 6 位设为 1 的指令是：`or al,01000000B`
 
-​	(2)设置 CS:IP 指向程序的第一条要执行的指令（即程序的入口），从而使程序得以运行；
+将 al 的第 7 位设为 1 的指令是：`or al,10000000B`
 
-​	(3)程序运行结束后，返回到加载者。
+将 al 的第 0 位设为 1 的指令是：`or al,00000001B`
 
-​	由可执行文件中的描述信息指明、设置 CPU 的 CS:IP 指向程序的第一条要执行的指令。我们知道可执行文件由描述信息和程序组成，**程序**来自于**源程序中的汇编指令和定义的数据**；**描述信息**则主要是**编译、连接程序对源程序中相关伪指令进行处理所得到的信息**。我们在程序 6.2 中，用伪指令 end 描述了程序的结束和程序的入口。在编译、连接后，由“end start”指明的程序入口，被转化为一个**入口地址**，存储在可执行文件的描述信息中。在程序 6.2 生成的可执行文件中，这个入口地址的偏移地址部分为：10H。当程序被加载入内存之后，加载者从程序的可执行文件的描述信息中读到程序的入口地址，设置 CS:IP。这样 CPU 就从我们希望的地址处开始执行。
+### 7.2 关于ASCII码
 
-​	归根结底，我们若要 CPU 从何处开始执行程序，只要在源程序中用“end 标号”指明就可以了。
+​	计算机中，所有的信息都是二进制，而人能理解的信息是已经具有约定意义的字符。而我们要把这些信息存储在计算机中，就要对其进行编码，将其转化为二进制信息进行存储。而计算机要将这些存储的信息再显示给我们看，就要再对其进行解码。只要编码和解码采用同样的规则，我们就可以将人能理解的信息存入到计算机，再从计算机中取出。
 
-​	有了这种方法，就可以这样来安排程序的框架：
+​	世界上有很多编码方案，有一种方案叫做 ASCII 编码，是在计算机系统中通常被采用的。简单地说，所谓编码方案，就是一套规则，它约定了用什么样的信息来表示现实对象。比如说，在 ASCII 编码方案中，用 61H 表示“a”，30H 表示数字“0”。
+
+​	一个文本编辑过程中，就包含着按照 ASCII 编码规则进行的编码和解码。在文本编辑过程中，我们按一下键盘的 a 键，就会在屏幕上看到“a”。这是怎样一个过程呢？我们按下键盘的 a 键，这个按键的信息被送入计算机，计算机用 ASCII 码的规则对其进行编码，将其转化为 61H 存储在内存的指定空间中；文本编辑软件从内存中取出61H，将其送到显卡上的显存中；工作在文本模式下的显卡，用 ASCII 码的规则解释显存中的内容，61H 被当作字符“a”，显卡驱动显示器，将字符“a”的图像画在屏幕上。我们可以看到，显卡在处理文本信息的时候，是按照 ASCII 码的规则进行的。这也就是说，如果我们要想在显示器上看到“a”，就要给显卡提供“a”的 ASCII 码，61H。如何提供？当然是写入显存中。
+
+### 7.3 以字符形式给出的数据
+
+​	我们可以在汇编程序中，用'......'的方式指明数据是以字符的形式给出的，编译器将把它们转化为相对应的 ASCII 码。如下面的程序。
+
+**程序 7.3**
 
 ```assembly
-assume cs: code
-
+assume cs:code,ds:data
+data segment 
+    db 'unIX' 
+    db 'foRK' 
+data ends 
 code segment 
-...
-数据 
-...
 start: 
-...
-代码
-...
-code ends
+    mov al,'a'
+    mov bl,'b' 
 
+    mov ax,4c00h 
+    int 21h 
+code ends
 end start 
 ```
 
-### 6.2 在代码段中使用栈
+上面的源程序中：
 
-完成下面的程序，利用栈，将程序中定义的数据逆序存放。
+​	“db 'unIX'” 相当于“db 75H,6EH,49H,58H”， “u”、“n”, “I”、“X” 的 ASCII 码分别为 75H、6EH、49H、58H;
 
-```assembly
-assume cs: codesg
+​	“db 'foRK'”相当于“db 66H,6FH,52H,4BH”,“f”、“o”、“R”、 “K”的ASCII码分别为 66H、6FH、52H、4BH;
 
-codesg segment
+​	“mov al,'a'”相当于“mov al,61H”，“a”的 ASCII 码为 61H; 
 
-    dw 0123h,0456h,0789h,0abch,0defh,0fedh,0cbah,0987h
-    ;code answer?
-codesg ends
+​	“mov bl,'b'”相当于“mov al,62H”，“b”的 ASCII 码为 62H。
 
-end
+​	将程序 7.3 编译为可执行文件后，用 Debug 加载查看 data 段中的内容，如图 7.3 所示。
+
+![7.3 查看data段中的内容](文档插图/7.3 查看data段中的内容.png)
+
+```html
+<center style="color:#C0C0C0">图7.3 查看data段中的内容</center>
 ```
 
-程序的思路大致如下。
+​	图 7.3 中，先用 r 命令分析一下 data 段的地址，因“ds=075A”，所以程序从 076AH 段开始，data 段又是程序中的第一个段，它就在程序的起始处，所以它的段地址为 076AH.
 
-​	程序运行时，定义的数据存放在 cs:0～cs:F 单元中，共 8 个字单元。依次将这 8 个字单元中的数据入栈，然后再依次出栈到这 8 个字单元中，从而实现数据的逆序存放。
+​	用 d 命令查看 data段，Debug 以十六进制数码和 ASCII 码字符的形式显示出其中的内容，从中，可以看出data 段中的每个数据所对应的 ASCII 字符。
 
-​	问题是，我们首先要有一段可当作栈的内存空间。如前所述，这段空间应该由系统来分配。可以在程序中通过定义数据来取得一段空间，然后将这段空间当作栈空间来用。程序如下：
+### 7.4 大小写转换的问题
 
-**程序 6.3** 
-
-```assembly
-assume cs:codesg
-
-codesg segment
-
-	dw 0123h,0456h,0789h,0abch,0defh,0fedh,0cbah,0987h
-	dw 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-						;用dw定义16个字型数据，在程序加载后，将取得16个字的内存空间存放这16个数据。
-						;在后面的程序中将这段空间当作栈来使用
-start: 	mov ax,cs
-		mov ss,ax		;要将cs:10~cs:2f的内存空间当作栈来用，初始状态下栈为空，ss:sp要指向栈底
-		mov sp,30h		;将设置栈顶 ss:sp 指向 cs:30
-		
-		mov bx,0
-		mov cx,8
-s: 		push cs:[bx]
-		add bx,2
-		loop s			;以上将代码段0~15单元中的8个字型数据依次入栈
-		
-		mov bx,0
-		mov cx,8
-s0: 	pop cs:[bx]
-		add bx,2
-		loop s0;		;以上依次出栈8个字型数据到代码段0~15单元中
-		
-		mov ax,4c00h
-		int 21h
-		
-codesg ends
-
-end start				;指明程序的入口在start处
-```
-
-​	其中定义 16 个字型数据的值是 0 或者其他对程序来说是无所谓的，dw 定义了 16 个数据，即在程序中写入 16 个字型数据，程序加载后用 32 个字节的内存空间来存放它们。可见我们描述 dw 作用时，可以说用它**定义数据**，也可以说用它们**开辟内存空间**。
-
-### 检测点 6.1
-
-​	(1)下面的程序实现依次用内存 0:0～0:15 单元中的内容改写程序中的数据，完成程序：
+​	下面考虑这样一个问题，在codesg 中填写代码，将 datasg 中的第一个字符串转化为大写，第二个字符串转化为小写。
 
 ```assembly
-assume cs:codesg
+assume cs: codesg, ds: datasg
 
-codesg segment
-	dw 0123h,0456h,0789h,0abch,0defh,0fedh,0cbah,0987h
-start: 	mov ax,0
-		mov ds,ax
-		mov bx,0
-
-		mov cx,8
-S:		mov ax,[bx]
-		______
-		add bx,2
-		loop s
-
-		mov ax,4c00h
-		int 21h
-
-codesg ends
-
-end start
-```
-
-解析：
-
-​	assume 是一个用于告诉汇编器如何将 CS 段寄存器与特定段名称 codesg 关联的指令。
-
-​	标号 start 所在的 mov ax,0 是第一条指令，前面定义了 8 个字型数据，所以偏移量 IP 为 0010。
-
-​	利用段前缀指明将 ds:[bx] 开始的内存单元的内容放入 cs:[bx] 中，所以应该填`mov cs:[bx],ax`
-
-​	![6.2 程序运行情况](文档插图/6.2 程序运行情况.png)
-
-<center style="color:#C0C0C0">图6.2 程序运行情况</center>
-
-​	(ps：利用 r 命令调试可以发现一开始程序长度由寄存器 CX 记录)
-
-​	(2)下面的程序实现依次用内存 0:0～0:15 单元中的内容改写程序中的数据，数据的传送用栈来进行。栈空间设置在程序内。完成程序：
-
-```assembly
-assume cs:codesg
-
-codesg segment
-
-	dw 0123h, 0456h,0789h,0abch,0defh,0fedh, 0cbah, 0987h
-	dw 0,0,0,0,0,0,0,0,0,0		;10 个字单元用作栈空间
-
-start:	mov ax,____
-		mov ss,ax
-		mov sp,____
-
-		mov ax,0
-		mov ds,ax
-		mov bx,0
-		mov cx,8
-
-s: 		push [bx]
-		____
-		add bx,2
-		loop s
-
-		mov ax,4c00h
-		int 21h
-
-codesg ends
-
-end start
-```
-
-解析：
-
-​	根据 assume ，段空间设置在 cs 中，所以 ss 起始地址 ax 设置为 cs，即`mov ax,cs`
-
-​	前面定义了 8 个字的数据，栈空间为 10 个字单元，即 20 个字节，所以初始化栈顶位置为 `36` 或者 `24H`。（注意，sp 的值不唯一，1c～24h都是可以令程序正常运行的值，如果超过这个范围，有可能在运行过程中改写第一行 dw 中的数据，导致错误，因为本质上**压栈后里立即出栈只需要用到一个字的空间**，但若只设置 12h 会导致错误。简而言之可以得到一个结论：**如果栈放在栈段，数据放在数据段，就不会相互影响，而直接操作内存是有风险的**）
-
-​	最终出栈位置也是 cs 段，即`pop cs:[bx]`
-
-​	调试过程中可以发现，即使还没有压栈，仅仅设置了 ss 的值，栈空间中有些 00 已经发生变化，这个问题要用后面章节内容来解答。
-
-![6.2.1 程序运行情况](文档插图/6.2.1 程序运行情况.png)
-
-<center style="color:#C0C0C0">图6.2.1 程序运行情况</center>
-
-更安全的写法——把程序定义在不同段上，避免相互影响：
-
-```assembly
-assume cs:codesg, ss:stack, ds:datasg
 datasg segment
-	dw 1122h,3344h,5566h,7788h,99aah,0bbcch,0ddeeh,0ff00h
+db 'BasiC'
+db 'iNfOrMaTiOn'
+datasg ends 
+codesg segment 
+start: 
+	;/*Code Answer*/
+codesg ends
+end start
+```
+
+​	首先分析一下，我们知道同一个字母的大写字符和小写字符对应的 ASCII 码是不同的，比如“A”的 ASCII 码是 41H，“a”的 ASCII 码是 61H。要改变一个字母的大小写，实际上就是要改变它所对应的 ASCII 码。我们可以将所有的字母的大写字符和小写字符所对应的ASCI码列出来，进行一下对比，从中找到规律。
+
+| 大写 | 十六进制 | 二进制    | 小写 | 十六进制 | 二进制    |
+| ---- | -------- | --------- | ---- | -------- | --------- |
+| A    | 41       | 0100 0001 | a    | 61       | 0110 0001 |
+| B    | 42       | 0100 0010 | b    | 62       | 0110 0010 |
+| C    | 43       | 0100 0011 | c    | 63       | 0110 0011 |
+| D    | 44       | 0100 0100 | d    | 64       | 0110 0100 |
+| E    | 45       | 0100 0101 | e    | 65       | 0110 0101 |
+| F    | 46       | 0100 0110 | f    | 66       | 0110 0110 |
+| ...  |          |           | ...  |          |           |
+
+​	通过对比，我们可以看出来，小写字母的 ASCII 码值比大写字母的 ASCII 码值大 20H。这样，我们可以想到，如果将“a”的 ASCII 码值减去 20H，就可以得到“A”；如果将“A”的 ASCII 码值加上 20H 就可以得到“a”。按照这样的方法，可以将 datasg 段中的第一个字符串“BaSiC”中的小写字母变成大写，第二个字符串“iNfOrMaTiOn”中的大写字母变成小写。
+
+​	要注意的是，对于字符串“BaSiC”，应只对其中的小写字母所对应的ASCII码进行减20H的处理，将其转为大写，而对其中的大写字母不进行改变；对于字符串“iNfOrMaTiOn”，我们应只对其中的大写字母所对应的ASCII码进行加20H的处理，将其转为小写，而对于其中的小写字母不进行改变。这里面就存在着一个前提，程**序必须要能够判断一个字母是大写还是小写**。以“BaSiC”讨论，程序的流程将是这样的：
+
+```assembly
+assume cs:codesg, ds:datasg 
+datasg segment
+    db 'Basic' 
+    db 'iNfOrMaTiOn'
 datasg ends
 
-stack segment
-	dw 0,0,0,0,0,0
-stack ends
+codesg segment
+start: 
+    mov ax,datasg
+    mov ds,ax
+    mov bx,0 
+    mov cx,5
+s:
+	mov al,[bx]
+	;如果(al)>61H,则为小写字母的ASCII码，则：sub al,20H
+	mov [bx], al
+	inc bx
+	loop s
+	;... ...
+codesg ends
+end start
+```
+
+​	判断将用到一些我们目前还没有学习到的指令。现在面临的问题是，用已学的指令来解决这个问题，则**不能对字母的大小写进行任何判断**。
+
+​	但是，现实的问题却要求程序必须要能区别对待大写字母和小写字母。那么怎么办呢？
+
+​	如果一个问题的解决方案，使我们陷入一种矛盾之中。那么，很可能是我们考虑问题的出发点有了问题，或是说，我们起初运用的规律并不合适。
+
+​	我们前面所运用的规律是，小写字母的 ASCII 码值，比大写字母的 ASCII 码值大 20H。考虑问题的出发点是：大写字母 +20H= 小写字母，小写字母 -20H= 大写字母。这使我们最终落入了这样一个矛盾之中：必须判断是大写字母还是小写字母，才能决定进行何种处理，而我们现在又没有可以使用的用于判断的指令。
+
+​	我们应该重新观察，寻找新的规律。可以看出，就 ASCII 码的二进制形式来看，除第 5 位（**位数从0开始计算**）外，大写字母和小写字母的其他各位都一样。**大写字母 ASCII 码的第 5 位为 0，小写字母的第 5 位为 1**。这样，我们就有了新的方法，一个字母，不管它原来是大写还是小写，将它的第 5 位置 0，它就必将变为大写字母；将它的第 5 位置 1，它就必将变为小写字母。在这个方法中，我们不需要在处理前判断字母的大小写。比如：对于“BaSiC”中的“B”，按要求，它已经是大写字母了，不应进行改变，将它的第 5 位设为 0，它还是大写字母，因为它的第 5 位本来就是 0。
+
+​	自然想到我们刚刚学过的 or 和 and 指令将一个数据中的某一位置 0 还是置 1，完整的程序如下：
+
+```assembly
+assume cs:codesg, ds:datasg
+
+datasg segment
+	db 'BasiC'
+	db 'iNfOrMaTiOn'
+datasg ends
+codesg segment
+start:
+	mov ax, datasg		
+	mov ds, ax			;设置 ds 指向 datasg段
+	mov bx,0			;设置(bx)=0,ds:bx指向'BaSiC'的第一个字母 
+	mov cx,5			;设置循环次数5，因为'BaSiC'有5个字母
+s:
+	mov al, [bx]		;将ASCII码从ds：bx所指向的单元中取出
+	and al,11011111B	;将al中的ASCII码的第5位置为0，变为大写字母
+	mov [bx], al		;将转变后的ASCII码写回原单元
+	inc bx				;(bx)加1，ds：bx指向下一个字母
+	loop s
+
+	mov bx,5			;设置(bx)=5,ds:bx指向'iNfOrMaTiOn'的第一个字母 
+	mov cx,11			;设置循环次数11，因为'iNfOrMaTiOn'有11个字母
+s0:
+	mov al,[bx]
+	or al,00100000B	;将al中的ASCII码的第5位置为1，变为小写字母
+	mov [bx],al
+	inc bx
+	loop s0
+	
+	mov ax,4c00h
+	int 21h
+codesg ends
+end start 
+```
+
+### 7.5 [bx+idata]
+
+​	在前面，我们用[bx]的方式来指明一个内存单元，还可以用一种更为灵活的方式来指明内存单元：`[bx+idata]`表示一个内存单元，它的偏移地址为(bx)+idata(bx中的数值加上idata).
+
+​	我们看一下指令`mov ax,[bx+200]`的含义：
+
+​	将一个内存单元的内容送入 ax，这个内存单元的长度为 2 个字节（字单元），存放一个字，偏移地址为 bx 中的数值加上 200，段地址在 ds 中。
+
+​	数学化的描述为：(ax)=((ds)*16+(bx)+200)
+
+​	该指令也可以写成如下格式（常用）：
+
+```assembly
+mov ax,[200+bx]
+mov ax, 200[bx]
+mov ax, [bx].200 
+```
+
+**问题 7.1**
+
+​	用 Debug 查看内存，结果如下：
+
+```assembly
+2000:1000 BE 00 06 00 00 00 ......
+```
+
+​	写出下面的程序执行后，ax、bx、cx 中的内容。
+
+```assembly
+mov ax,2000H
+mov ds,ax
+mov bx,1000H
+mov ax,[bx]
+mov cx,[bx+1]
+add cx,[bx+2] 
+```
+
+分析
+
+```assembly
+mov ax, [bx]
+```
+
+​	访问的字单元的段地址在ds中，(ds)=2000H；偏移地址在 bx 中，(bx)=1000H；指令执行后(ax)=00BEH。
+
+```assembly
+mov cx,[bx+1]
+```
+
+​	访问的字单元的段地址在 ds 中，(ds)=2000H；偏移地址=(bx)+1=1001H；指令执行后(сx)=0600H.
+
+```assembly
+add cx,[bx+2]
+```
+
+​	访问的字单元的段地址在 ds 中，(ds)=2000H；偏移地址=(bx)+2=1002H；指令执行后(cx)=0606H.
+
+### 7.6 用[bx+idata]的方式进行数组的处理
+
+​	有了[bx+idata]这种表示内存单元的方式，我们就可以用更高级的结构来看待所要处理的数据。
+
+​	问题：在 codesg 中填写代码，将 datasg 中定义的第一个字符串转化为大写，第二个字符串转化为小写。
+
+```assembly
+assume cs: codesg, ds: datasg 
+datasg segment
+db 'Basic 
+db 'MinIX'
+datasg ends
 
 codesg segment
-	dw 0123h, 0456h,0789h,0abch,0defh,0fedh, 0cbah, 0987h
-
 start:
-	mov ax,stack
-	mov ss,ax
-	mov sp,02h
+	;/*Code Answer*/
+codesg ends
+
+end start
+```
+
+​	按照我们原来的方法，用[bx]的方式定位字符串中的字符。代码段中的程序如下。
+
+```assembly
+    mov ax,datasg
+    mov ds,ax 
+    mov bx,0
+
+    mov cx,5
+S:
+	mov al,[bx]
+	and al,11011111b
+	mov [bx],al
+	inc bx
+	loop s
 	
+	mov bx,5 
+	mov cx,5
+s0:
+	mov al,[bx]
+	or al,00100000b
+	mov [bx],al
+	inc bx
+	loop s0
+```
+
+​	现在，我们有了[bx+idata]的方式，就可以用更简化的方法来完成上面的程序。观察 datasg 段中的两个字符串，一个的起始地址为 0，另一个的起始地址为 5。我们可以将这两个字符串看作两个数组，一个从 0 地址开始存放，另一个从 5 开始存放。那么我们可以用[0+bx]和[5+bx]的方式在同一个循环中定位这两个字符串中的字符。在这里，0 和 5 给定了两个字符串的起始偏移地址，bx 中给出了从起始偏移地址开始的相对地址。这两个字符串在内存中的起始地址是不一样的，但是，它们中的每一个字符，从起始地址开始的相对地址的变化是相同的。改进的程序如下：
+
+```assembly
+    mov ax,datasg
+    mov ds,ax 
+    mov bx,0
+
+    mov cx, 5
+s:
+	mov al,[bx]			;定位第一个字符串中的字符
+	and al,11011111b
+	mov [bx],al
+	mov al,[5+bx]		;定位第二个字符串中的字符
+	or al,00100000b
+	mov [5+bx],al 
+	inc bx
+	loop s
+```
+
+程序也可以写成下面的样子：
+
+```assembly
+    mov ax,datasg
+    mov ds,ax
+    mov bx,0
+
+    mov cx,5
+s:
+	mov al,0[bx]
+	and al,11011111b
+	mov 0[bx],al
+	mov al,5[bx]
+	or al,00100000b
+	mov 5[bx],al 
+	inc bx
+	loop s
+```
+
+如果用高级语言，比如C语言来描述上面的程序，大致是这样的：
+
+```c
+char a[5]="Basic";
+char b[5]="MinIX"; 
+main()
+{
+	int i;
+    i = 0; 
+    do
+    {
+        a[i] = a[i] & OxDE;
+        b[i] = b[i] | 0x20; 
+        i ++;
+    }while(i<5); 
+}
+```
+
+​	如果你熟悉C语言的话，可以比较一下这个C程序和上面的汇编程序的相似之处。尤其注意它们定位字符串中字符的方式。
+
+​	C 语言：`a[i], b[i]`
+
+​	汇编语言：`0[bx], 5[bx]`
+
+​	通过比较，我们可以发现，[bx+idata]的方式为高级语言实现数组提供了便利机制。
+
+### 7.7 SI 和 DI
+
+​	si 和 di 是 8086CPU 中和 bx 功能相近的寄存器，si 和 di **不能够分成两个8位寄存器来使用**。下面的3组指令实现了相同的功能。
+
+```assembly
+;第一组
+mov bx,0
+mov ax,[bx]
+;第二组
+mov si,0
+mov ax,[si]
+;第三组
+mov di,0
+mov ax,[di]
+```
+
+下面的3组指令也实现了相同的功能。
+
+```assembly
+;第一组
+mov bx,0
+mov ax,[bx+123]
+;第二组
+mov si,0
+mov ax,[si+123]
+;第三组
+mov di,0
+mov ax,[di+123] 
+```
+
+**问题 7.2**
+
+​	用 si 和 di 实现将字符串'welcome to masm！'复制到它后面的数据区中。
+
+```assembly
+assume cs:codesg,ds:datasg
+
+datasg segment
+    db 'welcome to masm!'
+    db '................'
+datasg ends
+```
+
+分析：
+
+​	现在我们要对 datasg 段中的数据进行复制，先来看一下要复制的数据在什么地方，datasg:0，这是要进行复制的数据的地址。那么复制到哪里去呢？它后面的数据区。“welcome to masm！”从偏移地址0开始存放，长度为16个字节，所以，它后面的数据区的偏移地址为 16，就是字符串“................”存放的空间。清楚了地址之后，我们就可以进行处理了。我们用 ds:si 指向要复制的**源始字符串**，用 ds:di 指向**复制的目的空间**，然后用一个循环来完成复制。代码段如下：
+
+```assembly
+codesg segment 
+start: 
 	mov ax,datasg
 	mov ds,ax
-	mov bx,0
+	mov si,0
+	mov di,16
+	
 	mov cx,8
-s:
-	push ds:[bx]
-	pop cs:[bx]
-	add bx,2
+S:
+	mov ax,[si]
+	mov [di],ax
+	add si,2
+	add di,2
 	loop s
 	
 	mov ax,4c00h
 	int 21h
+
+codesg ends
+end start
+```
+
+​	注意，在程序中，用 16 位寄存器进行内存单元之间的数据传送，**一次复制 2 个字节**，一共循环 8 次。
+
+**问题 7.3**
+
+​	用更少的代码，实现问题7.2中的程序。
+
+分析：
+
+​	我们可以利用[bx(si或di)+idata]的方式，来使程序变得简洁。程序如下（只需要 si 寄存器，不需要 di 了）。
+
+```assembly
+codesg segment
+start:
+	mov ax,datasg
+	mov ds,ax
+	mov si,0
+	mov cx,8
+s:
+	mov ax,0[si]
+    mov 16[si],ax
+    add si,2
+    loop s
+    
+    mov ax,4c00h
+	int 21h
 	
 codesg ends
-
 end start
 ```
 
-![6.2.2 改进后程序运行情况](文档插图/6.2.2 改进后程序运行情况.png)
+### 7.8 [bx+si]和[bx+di]
 
-<center style="color:#C0C0C0">图6.2.2 改进后程序运行情况</center>
+​	在前面，我们用[bx(si或di）]和[bx(si或di)+idata]的方式来指明一个内存单元，我们还可以用更为灵活的方式：[bx+si]和[bx+di]。
 
-### 6.3 将数据、代码、栈放入不同的段
+​	[bx+si]和[bx+di]的含义相似，我们以[bx+si]为例进行讲解。
 
-​	在前面的内容中，我们在程序中用到了数据和栈，将**数据、栈和代码都放到了一个段里面**。我们在编程的时候要注意何处是数据，何处是栈，何处是代码。这样做显然有两个问题：
+​	[bx+si]表示一个内存单元，它的偏移地址为(bx)+(si)(即bx 中的数值加上 si 中的数值)。
 
-​	(1)把它们放到一个段中使程序显得混乱；
+​	指令`mov ax,[bx+si]`的含义如下：
 
-​	(2)前面程序中处理的数据很少，用到的栈空间也小，加上没有多长的代码，放到一个段里面没有问题。但如果数据、栈和代码需要的空间超过64KB，就不能放在一个段中（一个段的容量不能大于64KB，是我们在学习中所用的8086模式的限制，并不是所有的处理器都这样)。
+​	将一个内存单元的内容送入 ax，这个内存单元的长度为 2 字节（字单元），存放一个字，偏移地址为 bx 中的数值加上 si 中的数值，段地址在 ds 中。
 
-​	所以，应该考虑**用多个段来存放数据、代码和栈**。
+​	数学化的描述为：(ax)=((ds)*16+(bx)+(si))
 
-​	我们用和定义代码段一样的方法来定义多个段，然后在这些段里面定义需要的数据，或通过定义数据来取得栈空间。具体做法如下面的程序所示，这个程序实现了和程序 6.3 一样的功能，不同之处在于**它将数据、栈和代码放到了不同的段中**。
+​	该指令也可以写成如下格式（常用）：
 
-**程序 6.4**
+​	`mov ax, [bx][si] `
+
+**问题 7.4**
+
+用 Debug 查看内存，结果如下：
 
 ```assembly
-assume cs:code, ds:data, ss:stack
-
-data segment
-	dw 0123h, 0456h, 0789h, 0abch, 0defh, 0fedh, 0cbah, 0987h 
-data ends
-stack segment
-	dw 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0 
-stack ends
-
-code segment 
-start: 
-	mov ax,stack
-	mov ss,ax 
-	mov sp,20h	;设置栈顶 ss：sp 指向 stack：20
-
-	mov ax,data
-	mov ds,ax	;ds 指向data 段
-
-	mov bx,0	;ds:bx指向data段中的第一个单元
-
-	mov cx, 8
-
-s:
-	push [bx]
-	add bx,2
-	loop s		;以上将 data 段中的0～15单元中的 8个字型数据依次入栈
-
-	mov bx,0
-
-	mov cx, 8
-s0:
-	pop [bx]
-	add bx,2
-	loop s0		;以上依次出栈8个字型数据到data段的0—15单元中
-
-	mov ax,4c00h
-	int 21h
-
-code ends
-
-end start
+2000:1000 BE 00 06 00 00 00 ... ...
 ```
 
-下面对程序 6.4 做出说明。
-
-(1) 定义多个段的方法
-
-​	定义一个段的方法和前面所讲的定义代码段的方法没有区别，只是**对于不同的段，要有不同的段名**。
-
-(2) 对段地址的引用
-
-​	现在，程序中有多个段了，如何访问段中的数据呢？当然要通过地址，而地址是分为两部分的，即**段地址**和**偏移地址**。如何指明要访问的数据的段地址呢？在程序中，段名就相当于一个标号，它代表了段地址。所以指令“mov ax,data”的含义就是将名称为“data”的段的段地址送入 ax。一个段中的数据的段地址可由段名代表，偏移地址就要看它在段中的位置了。程序中“data”段中的数据“0abch”的地址就是： data:6。要将它送入 bx 中，就要用如下的代码：
+写出下面的程序执行后，ax、bx、cx中的内容。
 
 ```assembly
-mov ax,data
+mov ax,2000H
 mov ds,ax
-mov bx,ds:[6]
+mov bx,1000H
+mov si,0
+mov ax,[bx+si]
+inc si
+mov cx,[bx+si]
+inc si
+mov di,si
+add cx,[bx+di] 
 ```
 
-我们不能用下面的指令：
+分析：
 
 ```assembly
-mov ds,data
-mov bx,ds:[6]
+mov ax,[bx+si]
 ```
 
-其中指令`mov ds,data`是错误的，因为8086CPU不允许将一个数值直接送入段寄存器中。**程序中对段名的引用，将被编译器处理为一个表示段地址的数值**(如指令“mov ds,data”中的“data”)。
-
-(3)“代码段”、“数据段”、“栈段”完全是我们的安排
-
-​	现在，我们以一个具体的程序来再次讨论一下所谓的“代码段”、“数据段”、“栈段”。在汇编源程序中，可以定义许多的段，比如在程序 6.4 中，定义了 3 个段，“code”、“data”和“stack”。我们可以分别安排它们存放代码、数据和栈。那么我们如何让 CPU 按照我们的这种安排来执行这个程序呢？下面来看看源程序中对这 3 个段所做的处理。
-
-​	①我们在源程序中为这 3 个段起了具有含义的名称，用来放数据的段我们将其命名为“data” ，用来放代码的段我们将其命名为“code”，用作栈空间的段命名为“stack”。
-
-​	这样命名了之后，CPU 并非去执行“code”段中的内容，处理“data”段中的数据，将“stack”当做栈，我们这样命名，**仅仅是为了使程序便于阅读**。这些**名称同“start”、“s”、“s0”等标号一样**，仅在源程序中存在，CPU并不知道它们。
-
-​	②我们在源程序中用伪指令“assume cs:code,ds:data,ss:stack”将 cs、 ds 和 ss 分别和code、data、stack 段相连。这样做了之后，CPU 是否就会将 cs 指向 code，ds 指向 data，ss 指向 stack，从而按照我们的意图来处理这些段呢？
-
-​	当然也不是，要知道 assume 是伪指令，是由编译器执行的，也是仅在源程序中存在的信息， CPU 并不知道它们。我们不必深究 assume 的作用，只要知道**需要用它将你定义的具有一定用途的段和相关的寄存器联系起来**就可以了。
-
-​	③ 若**要 CPU 按照我们的安排行事，就要用机器指令控制它**，源程序中的汇编指令是 CPU 要执行的内容。CPU 如何知道去执行它们？我们在源程序的最后用“end start”说明了程序的入口，这个入口将被写入可执行文件的描述信息，可执行文件中的程序被加载入内存后，CPU 的 CS:IP 被设置指向这个入口，从而开始执行程序中的第一条指令。标号“start”在“code”段中，这样 CPU 就将 code 段中的内容当作指令来执行了。我们在 code 段中，使用指令：
+​	访问的字单元的段地址在ds中，(ds)=2000H；偏移地址=(bx)+(si)=1000H；指令执行后(ax)=00BEH。
 
 ```assembly
-mov ax,stack
-mov ss,ax
-mov sp,20h
+mov cx, [bx+si]
 ```
 
-​	设置 ss 指向 stack，设置 ss:sp 指向 stack:20，CPU 执行这些指令后，将把 stack 段当做栈空间来用。CPU若要访问 data 段中的数据，则可用 ds 指向 data 段，用其他的寄存器(如 bx)来存放 data 段中数据的偏移地址。
-
-​	总之，CPU 到底如何处理我们定义的段中的内容，是当作指令执行，当作数据访问，还是当作栈空间，**完全是靠程序中具体的汇编指令，和汇编指令对 CS:IP、SS:SP、DS 等寄存器的设置来决定的**。完全可以将程序 6.4 写成下面的样子，实现同样的功能。
+​	访问的字单元的段地址在ds中，(ds)=2000H；偏移地址=(bx)+(si)=1001H；指令执行后(cx)=0600H。
 
 ```assembly
-assume cs:b, ds:a, ss:c
-
-a segment
-	dw 0123h, 0456h, 0789h, 0abch, 0defh, 0fedh, 0cbah, 0987h 
-a ends
-
-c segment
-	dw 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0 
-c ends
-
-b segment 
-d:
-	mov ax,c 
-	mov ss,ax
-	mov sp,20h		;希望用c段当作栈空间，设置ss:sp指向c：20
-	
-	mov ax,a
-	mov ds,ax		;希望用ds：bx访问a段中的数据，ds指向a段
-	
-	mov bx, 0		;ds：bx指向a段中的第一个单元mov cx,8
-s: 
-	push [bx]
-	add bx,2 
-	loop s			;以上将a段中的0～15单元中的8个字型数据依次入栈
-	
-	mov bx,0
-	mov cx,8
-s0:
-	pop [bx]
-	add bx,2
-	loop s0			;以上依次出栈8个字型数据到a段的0～15单元中
-	
-	mov ax,4c00h
-	int 21h 
-	
-b ends 
-
-end d			;d处是要执行的第一条指令，即程序的入口
+add cx, [bx+di]
 ```
 
-### 实验5 编写、调试具有多个段的程序
+​	访问的字单元的段地址在ds中，(ds)=2000H；偏移地址=(bx)+(si)=1002H；指令执行后(cx)=0606H。
 
-这一章的内容较少，有些知识需要在实践中掌握。这个实验，既是实验，也是学习内容。
+​	只有第三行修改了 bx，指令执行后(bx) = 1000H。
 
-​	(1)将下面的程序编译、连接，用 Debug 加载、跟踪，然后回答问题。
+### 7.9 [bx+si+idata]和[bx+di+idata]
+
+​	[bx+si+idata]和[bx+di+idata]的含义相似，我们以[bx+si+idata]为例进行讲解。
+
+​	[bx+si+idata]表示一个内存单元，它的偏移地址为(bx)+(si)+idata。
+
+​	指令`mov ax,[bx+si+idata]`的含义如下：
+
+​	将一个内存单元的内容送入 ax，这个内存单元的长度为 2 字节（字单元），存放一个字，偏移地址为 bx 中的数值加上 si 中的数值再加上 idata，段地址在 ds 中。
+
+​	数学化的描述为：(ax)=((ds)*16+(bx)+(si)+idata)
+
+​	该指令也可以写成如下格式（常用）：
 
 ```assembly
-assume cs:code, ds:data, ss:stack
-
-data segment
-	dw 0123h, 0456h, 0789h, 0abch, 0defh, 0fedh, 0cbah, 0987h
-data ends
-
-stack segment
-	dw 0,0,0,0,0,0,0,0
-stack ends
-
-code segment
-
-start:
-	mov ax,stack
-	mov ss,ax
-	mov sp,16                            
-	
-	mov ax,data
-	mov ds,ax
-	
-	push ds:[0]
-	push ds:[2]
-	pop ds:[2]
-	pop ds:[0]
-	
-	mov ax,4c00h
-	int 21h
-	
-code ends 
-
-end start
+mov ax,[bx+200+si]
+mov ax,[200+bx+si]
+mov ax,200[bx][si]
+mov ax,[bx].200[si]
+mov ax, [bx][si].200
 ```
 
-​	①CPU 执行程序，程序返回前，data 段中的数据为多少？
+**问题 7.5**
 
-​	②CPU 执行程序，程序返回前，cs=`____`、ss=`____`、ds=`____`。
-
-​	③设程序加载后，code 段的段地址为 X，则 data 段的段地址为`____`，stack 段的段地址为`____`。
-
-解析：
-
-​	①程序执行结束返回前，data 段中的数据为：23 01 56 04 89 07 BC 0A-EF 0D ED 0F BA 0C 87 09
-
-（执行程序前，可以利用 CS = DS + 0010H，输入`-d 076a:0`可以发现 data 段数据程序执行前后不变。）
-
-​	②cs = 076c、ss = 076b、ds = 076a
-
-​	③code 段的段地址为 X，则 data 段的段地址为 X - 2，stack 段的段地址为 X - 1。
-
-![6.3 程序运行结果](文档插图/6.3 程序运行结果.png)
-
-<center style="color:#C0C0C0">图6.3 程序运行结果</center>
-
-​	(2)将下面的程序编译、连接，用 Debug 加载、跟踪，然后回答问题。
+​	用Debug查看内存，结果如下：
 
 ```assembly
-assume cs:code, ds:data, ss:stack
-data segment
-	dw 0123H,0456H
-data ends
-
-stack segment
-	dw 0,0
-stack ends
-
-code segment
-start:
-	mov ax,stack
-	mov ss,ax
-	mov sp,16
-	
-	mov ax,data
-	mov ds,ax
-	
-	push ds:[0]
-	push ds:[2]
-	pop ds:[2]
-	pop ds:[0]
-	
-	mov ax, 4c00h
-	int 21h
-	
-code ends
-
-end start
+2000:1000 BE 00 06 00 6A 22 ... ...
 ```
 
-​	① CPU 执行程序，程序返回前，data 段中的数据为多少？
-
-​	② CPU 执行程序，程序返回前，cs=`____`、ss=`____`、ds=`____`
-
-​	③设程序加载后，code 段的段地址为 X，则 data 段的段地址为`____`，stack 段的段地址为`____`。
-
-​	④对于如下定义的段：
+写出下面的程序执行后，ax、bx、cx 中的内容。
 
 ```assembly
-name segment
-...
-...
-name ends
+mov ax,2000H
+mov ds,ax
+mov bx,1000H
+mov si,0
+mov ax,[bx+2+si]
+inc si
+mov cx,[bx+2+si]
+inc si
+mov di,si
+mov bx,[bx+2+di] 
 ```
 
-​	如果段中的数据占 N 个字节，则程序加载后，该段实际占有的空间为`____`。
-
-解析：
-
-​	①data 段数据为：23 01 56 04 00 00 00 00-00 00 00 00 00 00 00 00（运行前后都没变）
-
-​	②CPU 执行程序，程序返回前，cs=`076C`、ss=`076B`、ds=`076A`
-
-​	③code 段的段地址为 X，则 data 段的段地址为`X-2`，stack 段的段地址为`X-1`。
-
-​	④对比(1)(2)可以发现，(1)中 data 段数据有 16 个字节，占用了 16 个字节空间，而(2)中 data 段数据只有 4 个字节，但实际上(2)也占用了 16 字节的空间，所以可以得出一个结论——**数据段和栈段在程序加载后实际占用空间以 16 个字节为单位，其余用 0 补充。**因此，该段实际占有的空间为 $(\lfloor N/16\rfloor+1)×16$ 个字节。“$\lfloor\quad\rfloor$”为向下取整符号。
-
-![6.3.1 程序运行结果](文档插图/6.3.1 程序运行结果.png)
-
-<center style="color:#C0C0C0">图6.3.1 程序运行结果</center>
-
-​	(3)将下面的程序编译、连接，用 Debug 加载、跟踪，然后回答问题。
+分析：
 
 ```assembly
-assume cs:code, ds:data, ss:stack
+mov ax, [bx+2+si]
+```
 
-code segment
+访问的字单元的段地址在ds中，(ds)=2000H；偏移地址=(bx)+(si)+2=1002H；指令执行后(ax)=0006H。
 
+```assembly
+mov cx, [bx+2+si]
+```
+
+访问的字单元的段地址在ds中，(ds)=2000H；偏移地址=(bx)+(si)+2=1003H；指令执行后(cx)=6A00H。
+
+```assembly
+mov bx, [bx+2+di]
+```
+
+访问的字单元的段地址在ds中，(ds)=2000H；偏移地址=(bx)+(di)+2=1004H；指令执行后(bx)=226AH。
+
+### 7.10 不同的寻址方式的灵活应用
+
+​	如果我们比较一下前面用到的几种定位内存地址的方法（可称为寻址方式），就可以发现：
+
+1. [idata]用一个常量来表示地址，可用于直接定位一个内存单元；
+2. [bx]用一个变量来表示内存地址，可用于间接定位一个内存单元；
+3. [bx+idata]用一个变量和常量表示地址，可在一个起始地址的基础上用变量间接定位一个内存单元；
+4. [bx+si]用两个变量表示地址；
+5. [bx+si+idata]用两个变量和一个常量表示地址。
+
+​	可以看到，从[idata]一直到[bx+si+idata]，我们可以用**更加灵活的方式来定位一个内存单元的地址**。这使我们可以从更加结构化的角度来看待所要处理的数据。下面我们通过一个问题的系列来体会 CPU 提供多种寻址方式的用意，并学习一些相关的编程技巧。
+
+**问题 7.6**
+
+编程，将 datasg 段中每个单词的头一个字母改为大写字母。
+
+```assembly
+assume cs:codesg,ds:datasg
+
+datasg segment
+    db '1. file         '
+    db '2. edit         '
+    db '3. search       '
+    db '4. view         '
+    db '5. options      '
+    db '6. help         '
+datasg ends
+
+codesg segment
 start: 
-	mov ax,stack
-	mov ss,ax
-	mov sp,16
-	
-	mov ax,data
-	mov ds,ax
-	
-	push ds:[0]
-	push ds:[2]
-	pop ds:[2]
-	pop ds:[0]
-	
-	mov ax,4c00h
-	int 21h
-	
-code ends
-data segment
-	dw 0123H,0456H
-data ends
+	;/*Code Answer*/
+codesg ends
 
-stack segment
-	dw 0,0 
-stack ends
-
-end start
+end start 
+end
 ```
 
-​	① CPU 执行程序，程序返回前，data 段中的数据为多少？
+分析：
 
-​	② CPU 执行程序，程序返回前，cs=`____`、ss=`____`、ds=`____`。
+​	datasg 中的数据的存储结构，如图 7.10 所示。
 
-​	③设程序加载后，code 段的段地址为 X，则 data 段的段地址为`____`，stack 段的段地址为`____`。
+​	我们可以看到，在 datasg 中定义了 6 个字符串，每个长度为 16 个字节（注意，为了直观，每个字符串的后面都加上了空格符，以使它们的长度刚好为 16 个字节）。因为它们是连续存放的，可以将这 6 个字符串看成一个 6 行 16 列的二维数组。按照要求，需要修改每一个单词的第一个字母，即二维数组的每一行的第 4 列（相对于行首的偏移地址为3）。
 
-解析：
+![7.10 datasg中数据的存储结构](文档插图/7.10 datasg中数据的存储结构.png)
 
-​	①注意此时 data 段和 stack 段放在 code 段后面了，所以段地址会有所变化。利用 u 命令查看 data 段地址变为 076D了，利用 d 命令查看，程序返回前，data段中的数据为：23 01 56 04 00 00 00 00-00 00 00 00 00 00 00 00。（执行前后无变化，可以自行调试）
-
-​	② CPU 执行程序，程序返回前，cs=`076A`、ss=`076E`、ds=`076D`。
-
-​	③设程序加载后，code 段的段地址为 X，则 data 段的段地址为`X+3`，stack 段的段地址为`X+4`。
-
-![6.3.2 程序运行结果](文档插图/6.3.2 程序运行结果.png)
-
-<center style="color:#C0C0C0">图6.3.2 程序运行结果</center>
-
-​	(4)如果将(1)、(2)、(3)题中的最后一条伪指令“end start”改为“end”（也就是说，不指明程序的入口），则哪个程序仍然可以正确执行？请说明原因。
-
-解析：
-
-​	如果将最后一条伪指令“end start”改为“end”，相当于**没有指明程序入口**，此时程序就会从加载进内存的第一个单元起开始执行。**第(1)题和第(2)题的第一个段都是数据段而非代码段，所以不能正确执行；而第(3)题的第一个段是代码段，所以其可以正确执行。**
-
-​	(5)程序如下，编写 code 段中的代码，将 a 段和 b 段中的数据依次相加，将结果存到 c 段中。
-
-```assembly
-assume cs:code
-
-a segment
-	db 1,2,3,4,5,6,7,8		;定义了8个字节的变量
-a ends
-
-b segment
-	db 1,2,3,4,5,6,7,8
-b ends
-
-c segment
-	db 0,0,0,0,0,0,0,0
-c ends
-
-code segment 
-start:
-	;/*Code Answer?*/
-code ends
-end start
+```html
+<center style="color:#C0C0C0">图7.10 datasg中数据的存储结构</center>
 ```
 
-解析：
-
-​	`db`是汇编语言中的一种**伪操作命令**，用于定义操作数占用的**字节数**。
-
-​	注意：**dw** 的含义是**定义字型数据**，dw 即 define word，字型数据可以直接放入寄存器中去，因为数据寄存器的大小也是一个字的大小，而 **db** 的含义是**定义字节型数据**，db 即 define byte，字节型数据应该**使用数据寄存器的高 8 位或是低 8 位进行存放**。
-
-​	这里不借助 cs（代码段）和 ss（栈段），我们就用段 ds 和 es。
-
-​	代码思路：ds 指向 c 段，es 指向 a 段，es + 16 指向 b 段，a、b 段对应内容分别加到 c 段上，循环此过程。
+​	我们需要进行 6 次循环，用一个变量 R 定位行，用常量 3 定位列。处理的过程如下。
 
 ```assembly
-assume cs:code
+    R=第一行的地址
+    mov cx,6
+S:
+    改变R行，3列的字母为大写
+    R=下一行的地址
+    loop s
+```
 
-a segment
-	db 1,2,3,4,5,6,7,8		;定义了8个字节的变量
-a ends
+​	我们用 bx 作变量，定位每行的起始地址，用 3 定位要修改的列，用[bx+idata]的方式来对目标单元进行寻址，程序如下。
 
-b segment
-	db 1,2,3,4,5,6,7,8
-b ends
+```assembly
+assume cs:codesg,ds:datasg
 
-c segment
-	db 0,0,0,0,0,0,0,0
-c ends
+datasg segment
+    db '1. file         '
+    db '2. edit         '
+    db '3. search       '
+    db '4. view         '
+    db '5. options      '
+    db '6. help         '
+datasg ends
 
-code segment 
-start:
-    mov ax,c
-    mov ds,ax		;ds指向c段
-    mov ax,a
-    mov es,ax		;es指向a段
-
+codesg segment
+start: 
+	mov ax,datasg
+    mov ds,ax
     mov bx,0
-    mov cx,8		;循环8次
-
-    s:
-    mov dl,es:[bx]
-    add [bx],dl
-    mov dl,es:[bx+16]	;bx+16指向b段
-    add [bx],dl
-    inc bx
+    
+    mov cx,6
+s:
+    mov al,[bx+3]		;定位R行，第3列字母传入al中
+    and al,11011111b	;第R行，第3列字母改成大写
+    mov [bx+3],al		;传回结果
+    add bx,16			;下一行
     loop s
     
     mov ax,4c00h
     int 21h
-code ends
+    
+codesg ends
+
+end start 
+```
+
+**问题 7.7**
+
+​	编程，将 datasg 段中每个单词改为大写字母。
+
+```assembly
+assume cs:codesg,ds:datasg
+
+datasg segment
+db 'ibm             '
+db 'dec             '
+db 'dos             '
+db 'vax             '
+datasg ends
+
+codesg segment 
+start:
+	;/*Code Answer?*/
+codesg ends
+
 end start
 ```
 
-​	执行后，利用`-d ds:0 f`查看结果为`076C:0000 02 04 06 08 0A 0C 0E 10-00 00 00 00 00 00 00 00`，可知程序正确运行了。
+分析：
 
-​	(6)程序如下，编写 code 段中的代码，用 push 指令将 a 段中的前 8 个字型数据，逆序存储到 b 段中。
+​	datasg 中的数据的存储结构如图 7.10.1 所示。
+
+![7.10.1 datasg中数据的存储结构](文档插图/7.10.1 datasg中数据的存储结构.png)
+
+<center style="color:#C0C0C0">图7.10.1 datasg中数据的存储结构</center>
+
+​	在 datasg 中定义了 4 个字符串，每个长度为 16 个字节（注意，为了使我们在 Debug 中可以直观地查看，每个字符串的后面都加上了空格符，以使它们的长度刚好为 16 个字节）。因为它们是连续存放的，我们可以将这 4 个字符串看成一个 4 行 16 列的二维数组。按照要求，我们需要修改每一个单词，即二维数组的每一行的前3列。
+
+​	我们需要进行 4×3 次的二重循环，用变量 R 定位行，变量 C 定位列。外层循环按行来进行，内层按列来进行。首先用 R 定位第 1 行，然后循环修改 R 行的前 3 列；然后再用 R 定位到下一行，再次循环修改 R 行的前 3 列··· ···，如此重复直到所有的数据修改完毕。处理的过程大致如下。
 
 ```assembly
-assume cs:code
+    R=第一行的地址；
+    mov cx,4 
+s0:
+	C=第一列的地址
+	mov cx,3 
+s:
+	改变R行，C列的字母为大写
+	C=下一列的地址；
+	loop s 
+	R=下一行的地址
+	loop s0
+```
 
-a segment
-	dw 1,2,3,4,5,6,7,8,9,0ah,0bh,0ch,0dh,0eh,0fh, 0ffh
-a ends
+​	我们用 bx 来作变量，定位每行的起始地址，用 si 定位要修改的列，用[bx+si]的方式来对目标单元进行寻址，程序如下。
 
-b segment
+```assembly
+assume cs:codesg,ds:datasg
+
+datasg segment
+db 'ibm             '
+db 'dec             '
+db 'dos             '
+db 'vax             '
+datasg ends
+
+codesg segment 
+start:
+    mov ax,datasg
+    mov ds,ax
+    mov bx,0
+
+    mov cx,4
+s0:
+	mov si,0
+	mov cx,3
+S:
+	mov al,[bx+si]
+	and al,11011111b
+	mov [bx+si],al
+	inc si
+	
+	loop s
+	
+	add bx,16
+	loop s0
+	
+	mov ax,4c00H
+	int 21H
+codesg ends
+
+end start
+end
+```
+
+**问题 7.8**
+
+​	然而，上面的程序有个问题。
+
+分析：
+
+​	问题在于 cx 的使用，我们进行二重循环，却只用了一个循环计数器，造成在进行内层循环的时候，覆盖了外层循环的循环计数值。多用一个计数器又不可能，因为 loop 指令默认 cx 为循环计数器。怎么办呢？
+
+​	我们应该在**每次开始内层循环的时候，将外层循环的 cx 中的数值保存起来**，在**执行外层循环的 loop 指令前，再恢复外层循环的 cx 数值**。可以用寄存器 dx 来临时保存 cx 中的数值，改进的程序如下。
+
+```assembly
+    mov ax,datasg
+    mov ds,ax
+    mov bx,0
+
+    mov cx,4
+s0: 
+	mov dx,cx		;将外层循环的cx值保存在dx中
+	mov si,0
+	mov cx,3		;cx设置为内层循环的次数
+s:
+	mov al,[bx+si]
+	and al,11011111b
+	mov [bx+si],al
+	inc si
+	loop s
+	
+	add bx,16
+	mov cx,dx			;用dx中存放的外层循环的计数值恢复cx
+	loop s0				;外层循环的loop指令将cx中的计数值减1
+	
+	mov ax,4c00H
+	int 21H
+```
+
+​	上面的程序用 dx 来暂时存放 cx 中的值，如果在内层循环中，dx 寄存器也被使用，该怎么办？我们似乎可以使用别的寄存器，但是 CPU 中的寄存器数量毕竟是有限的，如 8086CPU 只有 14 个寄存器。在上面的程序中， si、cx、ax、bx，显然不能用来暂存 cx 中的值，因为这些寄存器在循环中也要使用；cs、ip、ds也不能用，因为 cs:ip 时刻指向当前指令，ds 指向 datasg 段；可用的就只有：dx、di、es、ss、sp、bp等6个寄存器了。可是如果循环中的程序比较复杂，这些寄存器也都被使用的话，那么该如何？
+
+​	我们在这里讨论的问题是，程序中经常需要进行数据的暂存，怎样做将更为合理。这些数据可能是寄存器中的，也可能是内存中的。我们可以用寄存器暂存它们，但是这不是一个一般化的解决方案，因为寄存器的数量有限，每个程序中可使用的寄存器都不一样。我们希望寻找一个通用的方案，来解决这种在编程中经常会出现的问题。
+
+​	显然，我们不能选择寄存器，那么可以使用的就是内存了。可以考虑**将需要暂存的数据放到内存单元中，需要使用的时候，再从内存单元中恢复**。这样我们就需要开辟一段内存空间。再次改进的程序如下。
+
+```assembly
+assume cs:codesg, ds:datasg 
+datasg segment
+    db 'ibm             '
+    db 'dec             '
+    db 'dos             '
+    db 'vax             '
+    dw 0						;定义一个字，用来暂存cx
+datasg ends
+
+codesg segment
+start:
+	mov ax,datasg
+	mov ds,ax
+	mov bx,0
+	mov cx,4
+s0:
+	mov ds:[40H],cx		;将外层循环的cx值保存在datasg:40H单元中
+	mov si,0
+	mov cx,3			;cx设置为内层循环的次数
+s:
+	mov al,[bx+si]
+	and al,11011111b
+	mov [bx+si],al
+	inc si
+	loop s
+	
+	add bx,16
+	mov cx,ds:[40H]		;用datasg:40H单元中的值恢复cx 
+	loop s0				;外层循环的loop指令将cx中的计数值减1
+
+	mov ax,4c00H
+	int 21H
+codesg ends
+end start
+```
+
+​	上面的程序中，用内存单元来保存数据，可是上面的做法却有些麻烦，因为如果需要保存多个数据的时候，你必须要记住数据放到了哪个单元中，这样程序容易混乱。
+
+​	我们使用内存来暂存数据，这一点是确定了的，但是值得推敲的是，我们用怎样的结构来保存这些数据，而使得我们的程序更加清晰。**一般来说，在需要暂存数据的时候，我们都应该使用栈。**回忆一下，栈空间在内存中，采用相关的指令，如push、pop等，可对其进行特殊的操作。下面，再次改进我们的程序。
+
+```assembly
+assume cs:codesg,ds:datasg,ss:stacksg
+
+datasg segment
+    db 'ibm             '
+    db 'dec             '
+    db 'dos             '
+    db 'vax             '
+datasg ends
+
+stacksg segment				;定义一个段，用来做栈段，容量为16个字节
+	dw 0,0,0,0,0,0,0,0
+stacksg ends
+
+codesg segment
+start:
+	mov ax,stacksg
+	mov ss,ax
+	mov sp,16
+	mov ax,datasg
+	mov ds,ax
+	mov bx,0
+	
+	mov cx,4
+s0:
+	push cx			;将外层循环的cx值压栈
+	mov si,0
+	mov cx,3		;cx设置为内层循环的次数
+S:
+	mov al,[bx+si]
+	and al,11011111b
+	mov [bx+si],al
+	inc si
+	loop s
+	
+	add bx,16
+	pop cx			;从栈顶弹出原cx的值，恢复cx
+	loop s0			;外层循环的loop指令将cx中的计数值减1
+
+	mov ax, 4c00H
+	int 21H
+	
+codesg ends
+end start
+```
+
+ **问题 7.9**
+
+​	编程，将 datasg 段中每个单词的前 4 个字母改为大写字母
+
+```assembly
+assume cs:codesg, ss:stacksg, ds:datasg
+
+stacksg segment
 	dw 0,0,0,0,0,0,0,0 
-b ends
+stacksg ends
 
-code segment
-start: 
-	;/*Code Answer?*/
+datasg segment
+    db '1. display      '
+    db '2. brows        '
+    db '3. replace      '
+    db '4. modify       '
+datasg ends
 
-code ends 
+codesg segment
+start:
+	;/*Code Answer*/
+codesg ends
 
 end start 
 ```
 
-解析：
+分析：
+
+​	datasg中的数据的存储结构，如图 7.10.2 所示。
+
+![7.10.2 datasg中数据的存储结构](文档插图/7.10.2 datasg中数据的存储结构.png)
+
+<center style="color:#C0C0C0">图7.10.2 datasg中数据的存储结构</center>
+
+​	在 datasg 中定义了 4 个字符串，每个长度为 16 字节（注意，为了使我们在 Debug 中可以直观地查看，每个字符串的后面都加上了空格符，以使它们的长度刚好为16个字节）。因为它们是连续存放的，我们可以将这4个字符串看成一个 4 行 16 列的二维数组，按照要求，我们需要修改每个单词的前 4 个字母，即二维数组的每一行的 3～6列。
+
+​	我们需要进行 4×4 次的二重循环，用变量 R 定位行，常量 3 定位每行要修改的起始列，变量 C 定位相对于起始列的要修改的列。外层循环按行来进行，内层按列来进行。我们首先用 R 定位第 1 行，循环修改 R 行的 3+C（0<C<3）列；然后再用 R 定位到下一行，再次循环修改 R 行的 3+C（0≤C≤3）列… …，如此重复直到所有的数据修改完毕。处理的过程大致如下：
 
 ```assembly
-assume cs:code
-
-a segment
-	dw 1,2,3,4,5,6,7,8,9,0ah,0bh,0ch,0dh,0eh,0fh,0ffh
-a ends
-
-b segment
-	dw 0,0,0,0,0,0,0,0 
-b ends
-
-code segment
-start: 
-	mov ax,a
-	mov ds,ax		;ds指向a段
-	mov ax,b
-	mov ss,ax		;ss指向b段
-	mov sp,16		;栈中有8个字，栈空间16字节
-	
-	mov bx,0
-	mov cx,8
+    R=第一行的地址；
+    mov cx,4
+s0:
+	C=第一个要修改的列相对于起始列的地址
+	mov cx,4
 s:
-	push [bx]
-	add bx,2		;偏移地址移动一个字
+	改变 R 行，3+C 列的字母为大写
+	C=下一个要修改的列相对于起始列的地址
 	loop s
+	R=下一行的地址
+	loop s0
+```
+
+​	我们用 bx 来作变量，定位每行的起始地址，用 si 定位要修改的列，用[bx+3+si]的方式来对目标单元进行寻址。
+
+​	请在实验中自己完成这个程序。
+
+​	这一章中，我们主要讲解了更灵活的寻址方式的应用和一些编程方法，主要内容有：
+
+* 寻址方式[bx(或 si、 di)+idata]、[bx+si(或 di)]、[bx+si(或 di)+idata]的意义和应用；
+
+* 二重循环问题的处理；
+
+* 栈的应用；
+
+* 大小写转化的方法；
+
+* and、or 指令。
+
+​	下一章中，我们将对寻址方式的问题进行更深入的探讨。之所以如此重视这个问题，是因为寻址方式的适当应用，使我们可以以更合理的结构来看待所要处理的数据。而为所要处理的看似杂乱的数据设计一种清晰的数据结构是程序设计的一个关键的问题。
+
+### 实验6 实践课程中的程序
+
+​	(1)将课程中所有讲解过的程序上机调试，用 Debug 跟踪其执行过程，并在过程中进一步理解所讲内容。
+
+注：见源代码文件夹对应章节以及实验部分。
+
+​	(2)编程，完成问题 7.9 中的程序。
+
+```assembly
+assume cs:codesg, ss:stacksg, ds:datasg
+
+stacksg segment
+	dw 0,0,0,0,0,0,0,0 
+stacksg ends
+
+datasg segment
+    db '1. display      '
+    db '2. brows        '
+    db '3. replace      '
+    db '4. modify       '
+datasg ends
+
+codesg segment
+start:
+	mov ax,stacksg
+	mov ss,ax
+	mov sp,16
+	mov ax,datasg
+	mov ds,ax
+	mov bx,0
+	
+	mov cx,4
+s0:
+	push cx			;外层循环的cx值压栈
+	mov si,0
+	mov cx,4		;cx设置为内层循环的次数
+s:
+	mov al,[bx+3+si]	;定位bx行3+si列
+	and al,11011111b	;大小写转换
+	mov [bx+3+si],al	;修改后的数据写回内存
+	inc si
+	loop s
+	
+	add bx,16
+	pop cx			;从栈顶弹出原cx的值，恢复cx
+	loop s0			;外层循环的loop指令将cx中的计数值减1
 	
 	mov ax,4c00h
 	int 21h
-
-code ends 
+codesg ends
 
 end start 
 ```
 
-​	程序执行完毕后，利用`-d ss:0 f`查看结果：`076C:0000 08 00 07 00 06 00 05 00-04 00 03 00 02 00 01 00`，可知程序正确运行了。
+![7.10.3 程序运行结果](文档插图/7.10.3 程序运行结果.png)
+
+```html
+<center style="color:#C0C0C0">图7.10.3 程序运行结果</center>
+```
+
