@@ -630,3 +630,341 @@ stack segment
 	db 200 dup (0)
 stack ends
 ```
+
+### 实验7 寻址方式在结构化数据访问中的应用
+
+​	Power idea 公司从 1975 年成立一直到 1995 年的基本情况如下。
+<table>
+		<tr>
+			<td>年份</td>
+			<td>收入(千美元)</td>
+			<td>雇员(人)</td>
+			<td>人均收入(千美元)</td>
+		</tr>
+		<tr>
+			<td>1975</td>
+			<td>16</td>
+			<td>3</td>
+			<td>?</td>
+		</tr>
+		<tr>
+			<td>1976</td>
+			<td>22</td>
+			<td>7</td>
+			<td>?</td>
+		</tr>
+		<tr>
+			<td>1977</td>
+			<td>382</td>
+			<td>9</td>
+			<td>?</td>
+		</tr>
+		<tr>
+			<td>1978</td>
+			<td>1356</td>
+			<td>13</td>
+			<td>?</td>
+		</tr>
+		<tr>
+			<td>1979</td>
+			<td>2390</td>
+			<td>28</td>
+			<td>?</td>
+		</tr>
+		<tr>
+			<td>1980</td>
+			<td>8000</td>
+			<td>38</td>
+			<td>?</td>
+		</tr>
+        <tr>
+			<td>...</td>
+			<td>...</td>
+			<td>...</td>
+			<td>...</td>
+		</tr>
+		<tr>
+			<td>1995</td>
+			<td>5937000</td>
+			<td>17800</td>
+			<td>?</td>
+		</tr>
+</table>
+
+下面的程序中，已经定义好了这些数据：
+
+```assembly
+assume cs:codesg
+
+data segment
+    db '1975','1976','1977','1978','1980','1981','1982','1983'
+    db '1984','1985','1986','1987','1988','1989','1990','1992'
+    db '1993','1994','1995'
+    ;以上是表示 21 年的 21 个字符串
+    
+    dd 16,22,382,1356,2390,8000,16000,24486,50065,97479,140417,197514
+    dd 345980,590827,803530,1183000,1843000,2759000,3753000,4649000,5937000
+    ;以上是表示 21 年公司总收入的 21 个 dword 型数据
+    
+    dw 3,7,9,13,28,38,130,220,476,778,1001,1442,2258,2793,4037,5635,8226
+    dw 11542,14430,15257,17800
+    ;以上是表示 21 年公司雇员人数的 21 个 word 型数据
+data ends
+
+table segment
+	db 21 dup ('year Rev. EE av ')
+table ends
+```
+
+​	编程，将 data 段中的数据按如下格式写入到 table 段中，并计算 21 年中的人均收入(取整)，结果也按照下面的格式保存在 table 段中。
+
+<table><thead>
+  <tr>
+    <th>行内地址↘</th>
+    <th colspan="4">年份(4 字节)</th>
+    <th>空格1</th>
+    <th colspan="4">收入(4 字节)</th>
+    <th>空格2</th>
+    <th colspan="2">雇员数(2 字节)</th>
+    <th>空格3</th>
+    <th colspan="2">人均收入(2 字节)</th>
+    <th>空格4</th>
+  </tr></thead>
+<tbody>
+  <tr>
+    <td>1年占1行，每行的起始地址↓</td>
+    <td>0</td>
+    <td>1</td>
+    <td>2</td>
+    <td>3</td>
+    <td>4</td>
+    <td>5</td>
+    <td>6</td>
+    <td>7</td>
+    <td>8</td>
+    <td>9</td>
+    <td>A</td>
+    <td>B</td>
+    <td>C</td>
+    <td>D</td>
+    <td>E</td>
+    <td>F</td>
+  </tr>
+  <tr>
+    <td>table:0H</td>
+    <td colspan="4">'1975'</td>
+    <td></td>
+    <td colspan="4">16</td>
+    <td></td>
+    <td colspan="2">3</td>
+    <td></td>
+    <td colspan="2">?</td>
+    <td></td>
+  </tr>
+  <tr>
+    <td>table:10H</td>
+    <td colspan="4">'1976'</td>
+    <td></td>
+    <td colspan="4">22</td>
+    <td></td>
+    <td colspan="2">7</td>
+    <td></td>
+    <td colspan="2">?</td>
+    <td></td>
+  </tr>
+  <tr>
+    <td>table:20H</td>
+    <td colspan="4">'1977'</td>
+    <td></td>
+    <td colspan="4">382</td>
+    <td></td>
+    <td colspan="2">9</td>
+    <td></td>
+    <td colspan="2">?</td>
+    <td></td>
+  </tr>
+  <tr>
+    <td>table:30H</td>
+    <td colspan="4">'1978'</td>
+    <td></td>
+    <td colspan="4">1356</td>
+    <td></td>
+    <td colspan="2">13</td>
+    <td></td>
+    <td colspan="2">?</td>
+    <td></td>
+  </tr>
+  <tr>
+    <td>table:40H</td>
+    <td colspan="4">'1979'</td>
+    <td></td>
+    <td colspan="4">2390</td>
+    <td></td>
+    <td colspan="2">28</td>
+    <td></td>
+    <td colspan="2">?</td>
+    <td></td>
+  </tr>
+  <tr>
+    <td>table:50H</td>
+    <td colspan="4">'1980'</td>
+    <td></td>
+    <td colspan="4">8000</td>
+    <td></td>
+    <td colspan="2">38</td>
+    <td></td>
+    <td colspan="2">?</td>
+    <td></td>
+  </tr>
+  <tr>
+    <td>... ...</td>
+    <td colspan="4">... ...</td>
+    <td></td>
+    <td colspan="4">... ...</td>
+    <td></td>
+    <td colspan="2">... ...</td>
+    <td></td>
+    <td colspan="2">... ...</td>
+    <td></td>
+  </tr>
+  <tr>
+    <td>table:140H</td>
+    <td colspan="4">'1995'</td>
+    <td></td>
+    <td colspan="4">5937000</td>
+    <td></td>
+    <td colspan="2">17800</td>
+    <td></td>
+    <td colspan="2">?</td>
+    <td></td>
+  </tr>
+</tbody></table>
+
+​	提示，可将 data 段中的数据看成是多个数组，而将 table 中的数据看成是一个结构型数据的数组，每个结构型数据中包含多个数据项。可用 bx 定位每个结构型数据，用 idata 定位数据项，用 si 定位数组项中的每个元素，对于 table 中的数据的访问可采用[bx].idata和[bx].idata[si]的寻址方式。
+​	注意，这个程序是到目前为止最复杂的程序，它几乎用到了我们以前学过的所有知识和编程技巧。所以，这个程序是对我们从前学习的最好的实践总结。请认真完成。
+
+解析：
+
+```assembly
+assume cs:codesg
+
+data segment
+    db '1975','1976','1977','1978','1979','1980','1981','1982','1983'
+    db '1984','1985','1986','1987','1988','1989','1990','1991','1992'
+    db '1993','1994','1995'
+    ;以上是表示 21 年的 21 个字符串
+    
+    dd 16,22,382,1356,2390,8000,16000,24486,50065,97479,140417,197514
+    dd 345980,590827,803530,1183000,1843000,2759000,3753000,4649000,5937000
+    ;以上是表示 21 年公司总收入的 21 个 dword 型数据
+    
+    dw 3,7,9,13,28,38,130,220,476,778,1001,1442,2258,2793,4037,5635,8226
+    dw 11542,14430,15257,17800
+    ;以上是表示 21 年公司雇员人数的 21 个 word 型数据
+data ends
+
+table segment
+	db 21 dup ('year Rev. nu av ')
+table ends
+
+stacksg segment stack
+	dw 8 dup (0)
+stacksg ends
+
+codesg segment
+start:
+	mov ax,table
+	mov es,ax		;es定位到table段
+	mov ax,data
+	mov ds,ax		;ds定位到data段
+	mov ax,stacksg
+	mov ss,ax		
+	mov sp,16		;申请16个字节的栈空间暂存循环变量
+	
+	mov bp,sp				;设置栈帧，bp指向栈顶
+	sub sp,4				;为变量A、B预留空间
+	mov word ptr [bp-2],0 	;每行步进2字节变量A归零，注意bp寄存器按内存单元寻址时，如未声明则默认在ss段
+	mov word ptr [bp-4],0 	;每行步进4字节变量B归零
+	
+	mov bx,0		;table行定位变量bx归零
+	mov cx,21		;总共处理21个table行
+s0:					;处理table行
+	push cx			;暂存外层循环变量cx
+	mov si,0		;定位每一项中具体元素的变量
+	mov cx,4		;年份有4个字节字符
+year:				;处理年份(4字节)
+	mov di,[bp-4]		;读取步进变量B
+	add di,si			;定位si+B，由于[di+si]是不合法的，所以这么写，如果合法的话直接合并成一句就好
+	mov al,[di]			;外层循环每循环一次，就后移B个字节从data区取数，即读下一个年份
+	mov es:[bx+si],al	;写回字符，写回时si从0开始，因为是新的table行了
+	inc si				;后移一个字符
+	loop year
+	
+blank1:					;处理空格(1字节)
+	mov al,' '			;mov al,20h亦可，要al寄存器中转，否则会存在类型没声明的问题
+	mov es:[bx+4],al	;写回table段要段前缀es强调，否则就写到data区去了
+	
+	mov si,0			;定位具体字
+	mov cx,2			;收入为2个字4个字节，循环2次
+rev:					;处理收入(2字)
+	mov di,[bp-4]			;读取步进变量B
+	add di,si				;定位si+B，由于[di+si]是不合法的，所以这么写。
+	mov ax,[84+di]			;外层循环每循环一次，就后移B个字节从data:84区取数，即读下一个收入
+	mov es:[bx+5+si],ax		;写回字，写回时si从0开始，因为是新的table行了
+	add si,2				;后移一个字
+	loop rev
+	
+blank2:
+	mov al,' '
+	mov es:[bx+9],al
+	
+ee:							;处理职工数(1字)
+	mov di,[bp-2]			;读取步进变量A
+	mov ax,[168+di]			;外层循环每循环一次，就后移A个字节从data:168取数，即读下一年雇员数
+	mov es:[bx+10],ax		;写回雇员数（一个字）
+	
+blank3:
+	mov al,' '
+	mov es:[bx+12],al
+	
+av:							;处理人均收入(1字)
+	mov di,[bp-4]			;读取步进变量B
+	mov ax,[di+84]			;32位被除数，低位存在ax中，外层循环每循环一次，就后移B个字节从data:84取收入
+	mov dx,[di+86]			;32位被除数，高位存在dx中，外层循环每循环一次，就后移B个字节从data:86取收入
+
+	mov di,[bp-2]			;读取步进变量A
+	div word ptr [168+di]	;除以员工数量
+	mov es:[bx+13],ax
+
+blank4:
+	mov al,' '
+	mov es:[bx+15],al
+	
+	add bx,16				;步进1行table，bx增加16字节
+	add word ptr [bp-2],2	;A变量步进2个字节
+	add word ptr [bp-4],4	;B变量步进4个字节
+	pop cx					;恢复外层循环cx的值
+	loop s0
+
+	mov ax,4c00H
+	int 21h
+codesg ends
+
+end start
+```
+
+解析：
+
+* 首先要注意编程习惯，**通常将 ds 指向源数据 data 段，es 指向目标数据 table 段**，如果你反过来用就会发现要经常使用段前缀声明`es:`从 data 段中取数，不符合编程直觉。es（附加段寄存器）通常用于需要同时访问两个数据段的场景（如**数据复制**）。将 es 设为 table 段，可明确区分源和目标的段地址，提高代码的可读性。
+* 解决了一个遗留问题，使用`stacksg segment stack`告诉编译器 stacksg 是栈段，这样就不会在连接时警告。
+* **x86 汇编语言不支持多重间接寻址**，需要分成两步写，比如：`mov di,[bp-2]、mov ax,[168+di]	`
+* 注意，只有 bx、si、di 和 bp 这 4 个寄存器可以用在“[...]”中来进行内存单元的寻址
+* 注意上面四个寄存器出现的组合，有些情况是非法的，比如`[si+bi]`，解决方法是换组合，或者单独运算。
+* x86 汇编语言中，**可以借助基址指针 bp 直接访问栈内任意位置的数据而无需移动栈顶指针**，这样做不会破坏栈顶以至于影响后续的 push/pop 操作。
+* 如果把内层循环展开成多句变为单层循环，确实可以少写很多语句偷懒，但是就忽略了本章的精髓，**双重循环的变量处理，写成双重循环 + 栈来寄存步进变量，用到了本章的两个重点知识**，这样写程序的拓展性会高很多，比如内部 4 字节年份改成 8 位编码，用双重循环改写起来就很容易，而单层循环要**代码复制**再复制若干行（按字传送要复制 2 行，按字节传送要复制 4 行）。
+
+* 运行结果如下：
+
+![8.9 初始化后data区及程序运行后table区的情况](文档插图/8.9 初始化后data区及程序运行后table区的情况.png)
+
+<center style="color:#C0C0C0">图8.9 初始化后data区及程序运行后table区的情况</center>
