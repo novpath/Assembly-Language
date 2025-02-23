@@ -1,1080 +1,545 @@
-## 第 10 章 CALL 和 RET 指令
+### 实验 10 编写子程序
 
-​	call 和 ret 指令都是转移指令，它们都修改 IP，或同时修改 CS 和 IP。它们经常被共同用来实现子程序的设计。这一章，我们讲解 call 和 ret 指令的原理。
+​	在这次实验中，我们将要编写 3 个子程序，通过它们来认识几个常见的问题和掌握解决这些问题的方法。同前面的所有实验一样，这个实验是必须独立完成的，在后面的课程中，将要用到这个实验中编写的3个子程序。
 
-### 10.1 ret 和 retf
+**【编程问题一】显示字符串**
 
-​	ret 指令**用栈中的数据，修改 IP 的内容**，从而实现**近转移**；
+> 显示字符串是现实工作中经常要用到的功能，应该编写一个通用的子程序来实现这个功能。我们应该提供灵活的调用接口，使调用者可以决定显示的位置(行、列)、内容和颜色。
+>
 
-​	retf 指令**用栈中的数据，修改 CS 和 IP 的内容**，从而实现**远转移**。
+**子程序描述**
 
-CPU 执行 ret 指令时，进行下面两步操作：
-
-​	(1) (IP)=((ss)*16+(sp))
-​	(2) (sp)=(sp)+2
-
-CPU 执行 retf 指令时，进行下面 4 步操作：
-	(1) (IP)=((ss)*16+(sp))
-
-​	(2) (sp)=(sp)+2
-
-​	(3) (CS)=((ss)*16+(sp))
-
-​	(4) (sp)=(sp)+2
-
-可以看出，如果我们用汇编语法来解释 ret 和 retf 指令，则:
-
-CPU 执行 ret 指令时，相当于进行:
+> 名称：show_str  
+>
+> 功能：在指定的位置，用指定的颜色，显示一个用 0 结束的字符串。  
+>
+> 参数：(dh)=行号(取值范围 0-24)，(dl)=列号(取值范围 0-79)，(cl)=颜色，ds:si 指向字符串的首地址  
+>
+> 返回：无  
+>
+> 应用举例：在屏幕的 8 行 3 列，用绿色显示 data 段中的字符串。  
+>
 
 ```assembly
-pop IP
+assume cs:code  
+data segment  
+	db 'Welcome to masm!',0  
+data ends
+
+code segment  
+start: 
+	mov dh,8  
+	mov dl,3  
+	mov cl,2  
+	mov ax,data  
+	mov ds,ax  
+	mov si,0  
+	call show_str  
+	
+	mov ax,4c00h  
+	int 21h
+show_str:  
+	... ...
+	... ...
+code ends  
+end start
 ```
 
-CPU 执行 retf 指令时，相当于进行:
+**提示**
+
+* 子程序的入口参数是屏幕上的行号和列号，注意在子程序内部要将它们转化为显存中的地址，首先要分析一下屏幕上的行列位置和显存地址的对应关系；
+* 注意保存子程序中用到的相关寄存器；
+* 这个子程序的内部处理和显存的结构密切相关，但是向外提供了与显存结构无关的接口。通过调用这个子程序，进行字符串的显示时可以不必了解显存的结构，为编程提供了方便。在实验中，注意体会这种设计思想。
+
+解析：
+
+* 显示缓冲区为：B8000H～BFFFFH，第 dh 行 dl 列偏移地址为：dh×00A0H+dl×0002H 
 
 ```assembly
-pop IP
-pop CS
+;名称：show_str  
+;功能：在指定的位置，用指定的颜色，显示一个用 0 结束的字符串。  
+;参数：(dh)=行号(取值范围 0-24)，(dl)=列号(取值范围 0-79)，(cl)=颜色，ds:si 指向字符串的首地址  
+;返回：无  
+;应用举例：在屏幕的 8 行 3 列，用绿色显示 data 段中的字符串。
+
+assume cs:code  
+data segment  
+	db 'Welcome to masm!',0  
+data ends
+
+stack segment stack
+	db 16 dup (0)
+stack ends
+
+code segment  
+start: 
+	mov dh,8		;行号(从零开始)
+	mov dl,3 		;列号
+	mov cl,2  		;字符属性
+	mov ax,data  
+	mov ds,ax  
+	mov si,0  
+	call show_str  
+	
+	mov ax,4c00h  
+	int 21h
+show_str:
+	push si
+	push ax
+	push cx			;子程序要用到cl，所以要存cx
+	push bx
+addr:
+	mov ax,0B800H	
+	mov es,ax		;es关联显存区
+	mov bx,0		;偏移地址bx初始化为0
+	
+	mov cl,dh	
+	mov ch,0
+sdh:				;行偏移计算
+	add bx,00A0H
+	loop sdh
+	
+	mov cl,dl
+	mov ch,0
+sdl:				;列偏移计算
+	add bx,0002H
+	loop sdl
+show:				;打印字符核心代码
+	mov cl,[si]		;先判断是否以0结束
+	mov ch,0
+	jcxz ok
+
+	mov al,[si]			;字符写入显存区偶数位
+	mov es:[bx],al
+	pop ax
+	mov es:[bx+1],al	;字符属性写入显存区奇数位
+	push ax
+	
+	inc si				;处理数据区下一个字符
+	add bx,2			;一次循环写入显存区两个字节
+	jmp short show
+ok:
+	pop bx
+	pop cx
+	pop ax
+	pop si
+	ret
+
+code ends  
+end start
 ```
 
-例:
-	下面的程序中，ret 指令执行后，(IP)=0，CS:IP 指向代码段的第一条指令。
+* 输入`-cls`清屏，运行`lab10a.exe`观察结果，发现结果正确。（上述过程如有疑问，请用力翻看实验 9）
+* 求行、列偏移也可以用`mul`命令
+
+![10.12 程序运行结果](文档插图/10.12 程序运行结果.png)
+
+<center style="color:#C0C0C0">图10.12 程序运行结果</center>
+
+**【编程问题二】解决除法溢出的问题**
+
+> ​	div 指令可以做除法，当进行 8 位除法的时候，用 al 存储结果的商，ah 存储结果的余数；进行 16 位除法的时候，用 ax 存储结果的商，dx 存储结果的余数。可是，如果结果的商大于 al 或 ax 所能存储的最大值，那么将如何？
+>
+
+比如，下面的程序段：
+
+```assembly
+mov bh,1  
+mov ax,1000  
+div bh  
+```
+
+进行的是 8 位除法，结果的商为 1000，而 1000 在 al 中放不下。
+
+又比如，下面的程序段：
+
+```assembly
+mov ax,1000H  
+mov dx,1  
+mov bx,1  
+div bx  
+```
+
+进行的是 16 位除法，结果的商为 11000H，而 11000H 在 ax 中存放不下。
+
+​	我们在用 div 指令做除法的时候，很可能发生上面的情况：结果的商过大，超出了寄存器所能存储的范围。当 CPU 执行 div 等除法指令的时候，如果发生这样的情况，将引发 CPU 的一个内部错误，这个错误被称为：**除法溢出**。我们可以通过特殊的程序来处理这个错误，但在这里我们不讨论这个错误的处理，这是后面的课程中要涉及的内容。下面我们仅仅来看一下除法溢出发生时的一些现象(DOSBox 的处理是强制中断返回，执行 IRET )，如图 10.12.1 所示。
+
+![10.12.1 除法溢出时发生的现象](文档插图/10.12.1 除法溢出时发生的现象.png)
+
+<center style="color:#C0C0C0">图10.12.1 除法溢出时发生的现象</center>
+
+​	图中展示了在 Windows 2000 中使用 Debug 执行相关程序段的结果，div 指令引发了 CPU 的除法溢出，系统对其进行了相关的处理。
+
+​	好了，我们已经清楚了问题的所在：用 div 指令做除法的时候可能产生除法溢出。由于有这样的问题，在进行除法运算的时候要注意除数和被除数的值，比如 1000000/10 就不能用 div 指令来计算。那么怎么办呢？我们用下面的子程序 divdw 解决。
+
+**子程序描述**
+
+> 名称：divdw
+>
+> 功能：进行不会产生溢出的除法运算，被除数为 dword 型，除数为 word 型，结果为 dword 型。
+>
+> 参数：(ax)=dword 型数据的低 16 位
+> 	    (dx)=dword 型数据的高 16 位
+>  	    (cx)=除数
+>
+> 返回：(dx)=结果的高 16 位，(ax)=结果的低 16 位
+>  	    (cx)=余数
+>
+> 应用举例：计算 1000000/10(F4240H/0AH)
+>
+
+```assembly
+mov ax,4240H
+mov dx,000FH
+mov cx,0AH
+call divdw
+```
+
+结果：(dx)=0001H，(ax)=86A0H，(cx)=0
+
+**提示**
+
+给出一个公式：
+
+X：被除数，范围：[0,FFFFFFF]
+N：除数，范围：[0,FFFF]
+H：X 高 16 位，范围：[0,FFFF]
+L：X 低 16 位，范围：[0,FFFF]
+
+int()：描述性运算符，取商，比如，int(38/10)=3
+rem()：描述性运算符，取余数，比如，rem(38/10)=8
+
+公式：$\text{X/N = int(H/N)*65536 + [rem(H/N)*65536+L]/N}$
+
+​	这个公式将可能产生溢出的除法运算：X/N，转变为多个不会产生溢出的除法运算。公式中，等号右边的所有除法运算都可以用 div 指令来做，肯定不会导致除法溢出。(关于这个公式的推导，请参看附注 5。) 
+
+解析：
+
+* 分析一下这个公式是什么意思：即 X/N 结果是个双字单元(32 位)，由高 16 位的 int(H/N) 和低 16 位的 [rem(H/N)*65536+L]/N 组成。其中×65536，即×10000H，相当于左移 16 位，也就是左移 4 个字节（正好可以从低 16 位移动到高 16 位），为何低 16 位不会出现除法溢出在附注 5 里也已证明。
+* 那么很明显，在计算 int(H/N) 过程中，被除数只需要 1 个低 16 位寄存器 ax 存储 H 即可，高位 dx 寄存器需要置零，结果也只需要 1 个 16 位内存单元存储。
+* 而计算 [rem(H/N)*65536+L]/N 过程中，被除数需要 2 个 16 位寄存器储存数据，高 16 位寄存器 dx 存储 rem(H/N) ，低 16 位寄存器 ax 存储 L，结果也只需要 1 个 16 位内存单元存储（注意一点，公式只证明 `[rem(H/N)*65536+L]/N` 整体不会除法溢出，结果只需要 1 个 16 位内存单元存储，但是`[rem(H/N)*65536+L]`是需要 2 个 16 位寄存器存储的。）。
+
+```assembly
+assume cs:code  
+code segment  
+start: 
+	mov ax,4240H
+	mov dx,000FH
+	mov cx,0AH
+	call divdw
+	
+	mov ax,4c00h
+	int 21h
+divdw:					;保存寄存器状态
+	push ax
+	push dx
+	push cx
+divdw_core:				;防溢出除法程序的核心代码
+	mov bp,sp			;bp置于栈顶
+	mov ax,[bp+2]		;读取高16位dx
+	mov dx,0			;高16位要置零，因为在求的是H/N，而非X/N
+	div word ptr [bp]	;H/N,ax存商，dx存余数
+	mov [bp+2],ax		;商写回高16位dx
+	
+	mov ax,[bp+4]		;取低16位L，之前rem(H/N)恰好存储在dx里，作为高16位，不用额外处理了
+	div word ptr [bp]	;ax存商，dx存余数
+	mov [bp+4],ax		;商写回低16位ax
+	mov [bp],dx			;余数写回cx
+divdw_out:				;还原寄存器状态
+	pop cx				
+	pop dx
+	pop ax
+	ret
+
+code ends  
+end start
+```
+
+![10.12.2 divdw程序运行结果](文档插图/10.12.2 divdw程序运行结果.png)
+
+<center style="color:#C0C0C0">图10.12.2 divdw程序运行结果</center>
+
+**【编程问题三】数值显示**
+
+> 编程，将data段中的数据以十进制的形式显示出来。
+>
+> ```assembly
+> data segment
+> 	dw 123,12666,1,8,3,38
+> data ends
+> ```
+
+​	这些数据在内存中都是二进制信息，标记了数值的大小。要把它们显示到屏幕上，成为我们能够能够读懂的信息，需要进行信息的转化。比如，数值 12666，在机器中存储为二进制信息：001100010111010B(317AH)，计算机可以理解它。而在显示器上读到可以理解的数值 12666，我们看到的应该是一串字符：“12666”。由于显卡遵循的是 ASCII 编码，为了让我们能在显示器上看到这串字符，它在机器中应以ASCII码的形式存储为：31H、32H、36H、36H(字符“0”～“9”对应的 ASCII 码为 30H～39H)。
+
+​	通过上面的分析可以看到，在概念世界中，有一个抽象的数据 12666，它表示了一个数值的大小。在现实世界中它可以有多种表示形式，可以在电子机器中以高低电平(二进制)的形式存储，也可以在纸上、黑板上、屏幕上以人类的语言“12666”来书写。现在，我们所面临的问题就是，要将同一抽象的数据，从一种表示形式转化为另一种表示形式。
+
+​	可见，要将数据用十进制形式显示到屏幕上，要进行两步工作：
+
+1. 将用二进制信息存储的数据转变为十进制形式的字符串；
+2. 显示十进制形式的字符串。
+
+​	第二步我们在本次实验的第一个子程序中已经实现，在这里只要调用一下 show_str 即可。我们来讨论第一步，因为将二进制信息转变为十进制形式的字符串也是经常要用到的功能，我们应该为它编写一个通用的子程序。
+
+**子程序描述**
+
+> 名称：dtoc  
+>
+> 功能：将 word 型数据转换为表示十进制数的字符串，字符串以 0 为结尾符。  
+>
+> 参数：(ax)=word型数据  
+>
+> ds:si 指向字符串的首地址  
+>
+> 返回：无  
+
+​	应用举例：编程，将数据 12666 以十进制的形式在屏幕的 8 行 3 列，用绿色显示出来。在显示时我们调用本次实验中的第一个子程序 show_str。
 
 ```assembly
 assume cs:code
 
-stack segment
-	db 16 dup (0)
-stack ends
+data segment
+	db 10 dup (0)
+data ends
 
-code segment
-	mov ax,4c00h
-	int 21h  
-	
+code segment  
 start:
-	mov ax,stack  
-	mov ss,ax  
-	mov sp,16  
-	mov ax,0  
-	push ax  
-	mov bx,0  
-	ret  
-code ends  
-
+    mov ax,12666
+    mov bx,data
+    mov ds,bx
+    mov si,0   
+    call dtoc
+    
+    mov dh,8   
+    mov dl,3   
+    mov cl,2   
+    call show_str  
+	... ...
+	... ...
+	... ...
+code ends   
 end start  
 ```
 
-下面的程序中，retf 指令执行后，CS:IP 指向代码段的第一条指令。  
+**提示**  
+
+下面我们对这个问题进行一下简单的分析。  
+
+​	(1) 要得到字符串“12666”，就是要得到一列表示该字符串的 ASCII 码：31H、32H、36H、36H、36H。  
+
+​	十进制数码字符对应的 ASCII 码 = 十进制数码 + 30H。  
+
+​	要得到表示十进制数的字符串，先求十进制数每位的值。  
+
+​	例：对于 12666，先求得各位的值：1、2、6、6、6。再将这些数分别加上 30H，便得到了表示 12666 的 ASCII 码串：31H、32H、36H、36H、36H。  
+
+​	(2) 那么，怎样得到每位的值呢？采用下面的**除基取余再逆序**的方法：  
+$$
+\begin{array}
+&除数\quad 商或被除数			&余数	\\
+10  |\underline{12666} &6\\
+10  |\underline{1266} &6\\
+10  |\underline{126} &6\\
+10 |\underline{12}&2\\
+10 |\underline{1}&1\\
+ \quad 0
+\end{array}
+$$
+​	可见，用 10 除 12666，共除 5 次，记下每次的余数，就得到了每位的值。
+(3) 综合以上分析，可得出处理过程如下。
+
+​	用 12666 除以 10，循环 5 次，记下每次的余数；将每次的余数分别加 30H,便得到了表示十进制数的 ASCII 码串。如下：
+$$
+\begin{array}
+&除数\quad 商或被除数			&余数	&\text{+30H} &\text{ASCII}码串 &字符串\\
+10  |\underline{12666} &6 & &36\text{H} &\text{'6'}\\
+10  |\underline{1266} &6& &36\text{H} &\text{'6'}\\
+10  |\underline{126} &6& &36\text{H} &\text{'6'}\\
+10 |\underline{12}&2& &32\text{H} &\text{'2'}\\
+10 |\underline{1}&1& &31\text{H} &\text{'1'}\\
+ \quad 0
+\end{array}
+$$
+(4) 对(3)的质疑。
+	在已知数据是 12666 的情况下，知道进行 5 次循环。可在实际问题中，数据的值是多少程序员并不知道，也就是说，程序员不能事先确定循环次数。
+	那么，如何确定数据各位的值已经全部求出了呢？我们可以看出，只要是**除到商为 0**，各位的值就已经全部求出。可以使用 jcxz 指令来实现相关的功能。
+
+---
+
+解析：
 
 ```assembly
-assume cs:code 
+assume cs:code
 
-stack segment  
-	db 16 dup (0)  
-stack ends  
+data segment
+	db 10 dup (0)
+data ends
 
 code segment  
-	mov ax,4c00h  
-	int 21h  
 start:
-	mov ax,stack  
-	mov ss,ax  
-	mov sp,16  
-	mov ax,0  
-	push cs  
-	push ax  
-	mov bx,0  
-	retf  
-code ends  
+    mov ax,12666
+    mov bx,data		
+    mov ds,bx		;bx定位data段
+    mov si,0
+    call dtoc
+    
+    mov dh,8   
+    mov dl,3   
+    mov cl,2   
+    call show_str  
+	mov ax,4c00h
+	int 21h
+;-------	
+;名称：dtoc  
+;功能：将 word 型数据转换为表示十进制数的字符串，字符串以 0 为结尾符。  
+;参数：(ax)=word型数据  
+;ds:si 指向字符串的首地址  
+;返回：无  
+;_______
 
-end start
-```
-
-### 10.a 检测点 
-
-​	补全程序，实现从内存 1000:0000 处开始执行指令。
-
-```assembly
-assume cs:code
-
-stack segment
-	db 16 dup (0)
-stack ends
-
-code segment
-start:
-	mov ax, stack
-	mov ss, ax
-	mov sp, 16
-	mov ax, ___________
+dtoc:			;存储寄存器状态，相关寄存器初始化
 	push ax
-	mov ax, ___________
-	push ax
-	retf
-code ends
-
-end start
-```
-
-解析：
-
-​	栈是 FILO 结构，因为 retf 是先 pop ip，后 pop cs，所以入栈时要先压入 cs 后压入 ip
-
-​	那答案就很明显了：
-
-```assembly
- mov ax,1000H
- ...
- mov ax,0H
-```
-
-### 10.2 call 指令  
-
-CPU 执行 call 指令时，进行两步操作：
-
-1. 将当前的 IP 或 CS 和 IP 压入栈中；
-2. 转移。  
-
-​	call指令不能实现短转移，除此之外，call指令实现转移的方法和jmp指令的原理相同，下面的几个小节中，我们以给出转移目的地址的不同方法为主线，讲解call指令的主要应用格式。
-
-### 10.3 依据位移进行转移的 call 指令  
-
-call 标号(将当前的 IP 压栈后，转到标号处执行指令)
-
-CPU 执行此种格式的 call 指令时，进行如下的操作:
-	(1)(sp)=(sp)-2
-
- 		((ss)*16+(sp))=(IP)
-
-​	(2)(IP)=(IP)+16位位移。
-
-* 16 位位移=标号处的地址-call 指令后的第一个字节的地址；
-* 16 位位移的范围为-32768~32767，用补码表示；
-* 16 位位移由编译程序在编译时算出。
-
-从上面的描述中，可以看出，如果我们用汇编语法来解释此种格式的 call 指令，则：
-
-CPU 执行“call 标号”时，相当于进行：
-
-```assembly
-push IP
-jmp near ptr 标号
-```
-
-### 10.b 检测点
-
-下面的程序执行后，ax 中的数值为多少？
-
-| 内存地址 | 机器码   | 汇编指令 |
-| -------- | -------- | -------- |
-| 1000:0   | b8 00 00 | mov ax,0 |
-| 1000:3   | e8 01 00 | call s   |
-| 1000:6   | 40       | inc ax   |
-| 1000:7   | 58       | s:pop ax |
-
-解析：
-
-| 内存地址 | 机器码   | 汇编指令 | 作用                    |
-| -------- | -------- | -------- | ----------------------- |
-| 1000:0   | b8 00 00 | mov ax,0 | ax=0                    |
-| 1000:3   | e8 01 00 | call s   | ip=6,push ip,jmp near s |
-| 1000:6   | 40       | inc ax   | 不执行                  |
-| 1000:7   | 58       | s:pop ax | ax = 6                  |
-
-### 10.4 转移的目的地址在指令中的call指令
-
-​	前面讲的 call 指令，其对应的机器指令中并没有转移的目的地址，而是相对于当前 IP 的转移位移。
-
-​	“call far ptr 标号”实现的是**段间转移**。  
-
-CPU 执行此种格式的 call 指令时，进行如下的操作。
-
-​	(1)(sp)=(sp)-2  
-
-​	     ((ss)*16+(sp))=(CS)
-
-​	     (sp)=(sp)-2  
-
-​	     ((ss)*16+(sp))=(IP)  
-
-​	(2)(CS)=标号所在段的段地址
-​	     (IP)=标号在段中的偏移地址
-
-从上面的描述中可以看出，如果我们用汇编语法来解释此格式的 call 指令，则：
-
-CPU 执行 “call far ptr 标号” 时，相当于进行：
-
-```assembly
-push CS  
-push IP  
-jmp far ptr 标号
-```
-
-### 10.c 检测点
-
-下面的程序执行后，ax中的数值为多少？
-
-| 内存地址 | 机器码         | 汇编指令       |
-| -------- | -------------- | -------------- |
-| 1000:0   | b8 00 00       | mov ax, 0      |
-| 1000:3   | 9A 09 00 00 10 | call far ptr s |
-| 1000:8   | 40             | inc ax         |
-| 1000:9   | 58             | s:pop ax       |
-|          |                | add ax, ax     |
-|          |                | pop bx         |
-|          |                | add ax, bx     |
-
-解析：
-
-| 内存地址 | 机器码         | 汇编指令       | 作用                            |
-| -------- | -------------- | -------------- | ------------------------------- |
-| 1000:0   | b8 00 00       | mov ax, 0      | ax = 0                          |
-| 1000:3   | 9A 09 00 00 10 | call far ptr s | push cs(1000)、push ip(8),jmp s |
-| 1000:8   | 40             | inc ax         | 不执行                          |
-| 1000:9   | 58             | s:pop ax       | ax = ip = 8 = 0008H             |
-|          |                | add ax, ax     | ax = 16 =  0010H                |
-|          |                | pop bx         | bx =1000H                       |
-|          |                | add ax, bx     | ax = 1010H                      |
-
-### 10.5 转移地址在寄存器中的 call 指令
-
-**指令格式:** `call 16位reg` 
-**功能:**  
-
-​	(sp)=(sp)-2
-
-​	((ss)*16+(sp))=(IP)
-
-​	(IP)=(16 位 reg)
-
-用汇编语法来解释此种格式的 call 指令，CPU 执行“call 16 位 reg”时，相当于进行：
-
-```assembly
-push IP
-jmp 16位reg
-```
-
-### 10.d 检测点 
-
-下面的程序执行后，ax 中的数值为多少？
-
-| 内存地址 | 机器码   | 汇编指令    |
-| -------- | -------- | ----------- |
-| 1000:0   | b8 06 00 | mov ax,6    |
-| 1000:3   | ff d0    | call ax     |
-| 1000:5   | 40       | inc ax      |
-| 1000:6   |          | mov bp,sp   |
-|          |          | add ax,[bp] |
-
-解析：
-
-| 内存地址 | 机器码   | 汇编指令    | 作用                                 |
-| -------- | -------- | ----------- | ------------------------------------ |
-| 1000:0   | b8 06 00 | mov ax,6    | ax = 6                               |
-| 1000:3   | ff d0    | call ax     | ip = 5, push ip, jmp 6               |
-| 1000:5   | 40       | inc ax      | 不执行                               |
-| 1000:6   |          | mov bp,sp   | bp = sp                              |
-|          |          | add ax,[bp] | ax = ax + ss:[bp] = 6 + 5 = 11 = 0BH |
-
-### 10.6 转移地址在内存中的 call 指令
-
-转移地址在内存中的 call 指令有两种格式。
-
-(1) call word ptr 内存单元地址
-
-用汇编语法来解释此种格式的 call 指令，则：
-
-CPU 执行 “call word ptr 内存单元地址” 时，相当于进行：
-
-```assembly
-push IP
-jmp word ptr 内存单元地址
-```
-
-比如，下面的指令：
-
-```assembly
-mov sp,10h
-mov ax,0123h
-mov ds:[0],ax
-call word ptr ds:[0]
-```
-
-执行后，(IP)=0123H，(sp)=0EH。
-
-(2) call dword ptr 内存单元地址
-
-用汇编语法来解释此种格式的 call 指令，则：
-
-CPU 执行“call dword ptr 内存单元地址”时，相当于进行：
-
-```assembly
-push CS
-push IP
-jmp dword ptr 内存单元地址
-```
-
-比如，下面的指令：
-
-```assembly
-mov sp,10h
-mov ax,0123h
-mov ds:[0],ax
-mov word ptr ds:[2],0
-call dword ptr ds:[0]
-```
-
-执行后，（CS)=0，（IP)=0123H，（sp)=0CH。
-
-### 10.e 检测点
-
-(1) 下面的程序执行后，ax 中的数值为多少？(注意：用 call 指令的原理来分析，不要在 Debug 中单步跟踪来验证你的结论。对于此程序，在 Debug 中单步跟踪的结果，不能代表 CPU 的实际执行结果。)
-
-```assembly
-assume cs:code
-stack segment
-	dw 8 dup (0)
-stack ends
-code segment
-start:
-	mov ax, stack
-	mov ss, ax
-	mov sp, 16
-	mov ds, ax
-	mov ax, 0
-	call word ptr ds:[0EH]
-	inc ax
-	inc ax
-	inc ax
-	mov ax, 4C00H
-	int 21h
-code ends
-end start
-```
-
-解析：
-
-* 栈段和数据段都设置成同一段
-* 执行`call word ptr ds:[0EH]`后 IP 入栈，入栈存在ds:[0E]和ds:[0F]中
-* ax 的最终值为 3，分析如下：
-
-| 指令                   | 作用                                     |
-| ---------------------- | ---------------------------------------- |
-| mov ax, stack          | ax = stack                               |
-| mov ss, ax             | ss = stack                               |
-| mov sp, 16             | sp = 16 = 10H                            |
-| mov ds, ax             | ds = ax = stack                          |
-| mov ax, 0              | ax = 0                                   |
-| call word ptr ds:[0EH] | Push IP，SP = 0EH，jmp ds:[0EH] = jmp IP |
-| inc ax                 | ax = 1                                   |
-| inc ax                 | ax = 2                                   |
-| inc ax                 | ax = 3                                   |
-| mov ax, 4C00H          | 程序终止                                 |
-
-(2) 下面的程序执行后，ax 和 bx 中的数值为多少？
-
-```assembly
-assume cs:code
-data segment
-	dw 8 dup (0)
-data ends
-code segment
-start:
-	mov ax, data
-	mov ss, ax
-	mov sp, 16
-	mov word ptr ss:[0], offset s
-	mov ss:[2], cs
-	call dword ptr ss:[0]
-	nop
-s: 
-	mov ax,offset s
-	sub ax,ss:[0CH]
-	mov bx,cs
-	sub bx,ss:[0EH]
-	mov ax,4C00h
-	int 21h
-code ends
-end start
-```
-
-分析：
-
-* 同样数据段和栈段设置在同一段
-
-| 指令                          | 作用                                            |
-| ----------------------------- | ----------------------------------------------- |
-| mov ax, data                  | ax = data                                       |
-| mov ss, ax                    | ss = data                                       |
-| mov sp, 16                    | sp = 10H                                        |
-| mov word ptr ss:[0], offset s | ss:[0] = s(s 偏移地址存放在ss:[0]和ss:[1]中)    |
-| mov ss:[2], cs                | ss:[2] = cs(cs 存放在ss:[2]和ss:[3]中)          |
-| call dword ptr ss:[0]         | push CS, push IP(IP 指向 nop), sp=0CH,jmp cs:s  |
-| nop                           | 不执行                                          |
-| s:mov ax,offset s             | ax = s                                          |
-| sub ax,ss:[0CH]               | ax = s - ss:[0CH] = s - IP = 1(nop 占 1 个字节) |
-| mov bx,cs                     | bx = cs                                         |
-| sub bx,ss:[0EH]               | bx = cs - ss:[0EH] = cs - cs = 0                |
-| mov ax,4C00h                  | 程序终止                                        |
-| int 21h                       | 程序终止                                        |
-
-### 10.7 call 和 ret 的配合使用
-
-​	前面分别学习了 ret 和 call 指令的原理。现在来看一下，如何将它们配合使用来实现子程序的机制。
-
-**问题 10.1**
-
-下面程序返回前，bx 中的值是多少？
-
-```assembly
-assume cs:code
-code segment
-start: 
-	mov ax,1
-	mov cx,3
-	call s
-	mov bx,ax 		;(bx)=?
-	mov ax,4c00h
-	int 21h
-s:	 
-	add ax,ax
+	push bx
+	push si
+	mov bx,10
+	mov di,0
+dtoc_core:			;显示数值核心代码
+	mov cx,ax		;遇到字符串0证明结尾了
+	jcxz dtoc_out
+	mov dx,0		;余数求出来后要归零，否则影响下一次div的高位
+	div bx			;除10，商保留在ax中，余数保留在dx中
+	add dx,30H		;数字转字符串ASCII码
+	push dx			;ASCII码压栈
+	inc di			;统计字符个数
+	jmp short dtoc_core
+dtoc_out:
+	mov cx,di		;循环字符个数次
+	mov si,0		
+	s:				;弹出字符到数据区
+	pop [si]
+	inc si
 	loop s
-	ret
-code ends
-end start
-```
-**分析**：
-
-我们来看一下CPU执行这个程序的主要过程。
-
-​	(1) CPU 将 call s 指令的机器码读入，IP 指向了 call s 后的指令 mov bx,ax，然后 CPU 执行 call s 指令，将当前的 IP 值(指令 mov bx,ax 的偏移地址)压栈，并将 IP 的值改变为标号 s 处的偏移地址;
-
-​	(2) CPU 从标号 s 处开始执行指令，loop 循环完毕后，(ax)=8;
-
-​	(3) CPU 将 ret 指令的机器码读入，IP 指向了 ret 指令的内存单元，然后 CPU 执行 ret 指令，从栈中弹出一个值(即 call s 先前压入的 mov bx,ax 指令的偏移地址)送入 IP 中。则 CS:IP 指向指令 mov bx,ax;
-
-​	(4) CPU 从 mov bx,ax 开始执行指令，直至完成。
-
-​	程序返回前，(bx)=8。可以看出，从标号 s 到 ret 的程序段的作用是计算 2 的 N 次方，计算前，N 的值由 cx 提供。
-
-​	我们再来看看下面的程序：
-
-源程序
-
-```assembly
-;源程序						;内存中的情况(假设程序从内存1000:0处装入)
-assume cs:code
-stack segment
-	db 8 dup (0)			  ;1000:0000 00 00 00 00 00 00 00
-	db 8 dup (0)			  ;1000:0008 00 00 00 00 00 00 00
-stack ends
-
-code segment
-start: 
-	mov ax, stack			  ;1001:0000 B8 00 10
-	mov ss, ax				  ;1001:0003 8E D0
-	mov sp,16				  ;1001:0005 BC 10 00
-	mov ax,1000				  ;1001:0008 B8 E8 03
-	call s					  ;1001:000B E8 05 00
-	mov ax,4c00h			  ;1001:000E B8 00 4C
-	int 21h					  ;1001:0011 CD 21
-s:
-	add ax,ax				  ;1001:0013 03 C0
-	ret						  ;1001:0015 C3
-code ends
-end start
-```
-
-看一下程序的主要执行过程。
-(1) 前3条指令执行后，栈的情况如下:
-
-1000:0000 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
-													    ↑ss:sp
-(2) call 指令读入后，(IP)=000EH，CPU 指令缓冲器中的代码为:E8 05 00;
-
-CPU 执行 E8 05 00，首先，栈中的情况变为：
-1000:0000 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 0E 00
-													↑ ss:sp
-
-然后，（IP)=(IP)+0005=0013H。
-
-(3) CPU 从 cs:0013H 处（即标号 s 处）开始执行。
-
-(4) ret 指令读入后：
-
-(IP)=0016H，CPU指令缓冲器中的代码为：C3
-
-CPU 执行 C3，相当于进行 pop IP，执行后，栈中的情况为：
-
-1000:0000 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 0E 00
-														   ↑ ss:sp
-
-(IP)=000EH
-
-(5) CPU 回到 cs:000EH 处（即 call 指令后面的指令处）继续执行。
-
-​	从上面的讨论中我们发现，可以写一个具有一定功能的程序段，我们称其为**子程序**，在需要的时候，用 call 指令转去执行。可是执行完子程序后，如何让 CPU 接着 call 指令向下执行？call 指令转去执行子程序之前，call 指令后面的指令地址将存储在栈中，所以可在子程序的后面使用 ret 指令，用栈中的数据设置 IP 的值，从而转到 call 指令后面的代码处继续执行。
-​	这样，我们可以利用 call 和 ret 来实现子程序的机制。子程序的框架如下。
-
-```assembly
-标号:
-	指令
-	ret
-```
-
-具有子程序的源程序的框架如下。
-
-```assembly
-assume cs:code
-code segment
-main:
-	... ...
-	call sub1 		;调用子程序sub1
-	... ...
-	... ...
-	mov ax,4c00h
-	int 21h
-sub1:				;子程序sub1开始
-	... ...
-	call sub2 		;调用子程序sub2
-	... ...
-	... ...
-	ret 			;子程序返回  
-sub2:				;子程序 sub2 开始  
-	...  
-	ret 			;子程序返回  
-code ends  
-end main  
-```
-
-现在，可以从子程序的角度，回过头来再看一下本节中的两个程序。
-
-### 10.8 mul 指令
-
-​	因下面要用到，这里介绍一下 mul 指令，mul 是乘法指令，使用 mul 做乘法的时候，注意以下两点。
-
-​	(1) 两个相乘的数：两个相乘的数，要么都是 8 位，要么都是 16 位。如果是 8 位，一个默认放在 AL 中，另一个放在 8 位 reg 或内存字节单元中；如果是 16 位，一个默认在 AX 中，另一个放在 16 位 reg 或内存字单元中。
-
-​	(2) 结果：如果是 8 位乘法，结果默认放在 AX 中；如果是 16 位乘法，结果高位默认在 DX 中存放，低位在 AX 中放。
-
-格式如下：
-
-```assembly
-mul reg  
-mul 内存单元
-```
-
-内存单元可以用不同的寻址方式给出，比如：
-
-```assembly
-mul byte ptr ds:[0]  
-```
-
-含义：`(ax)=(al)*((ds)*16+0))`  
-
-```assembly
-mul word ptr [bx+si+8]  
-```
-
-含义：`(ax)=(ax)*((ds)*16+(bx)+(si)+8)`结果的低 16 位
-
-​	    `(dx)=(ax)*((ds)*16+(bx)+(si)+8)`结果的高 16 位。
-
-例：  
-
-(1) 计算 100*10。
-100 和 10 小于 255，可以做 8 位乘法，程序如下。  
-
-```assembly
-mov al,100  
-mov bl,10  
-mul bl  
-```
-
-结果：(ax)=1000(03E8H)
-
-(2) 计算 100 * 10000
-
-100 小于255，可10000大于255，所以必须做 16 位乘法，程序如下。
-
-```assembly
-mov ax,100
-mov bx,10000
-mul bx
-```
-
-结果：(ax)=4240H，(dx)=000FH		(F4240H=1000000)
-
-### 10.9 模块化程序设计
-
-​	从上面我们看到，call 与 ret 指令共同支持了汇编语言编程中的模块化设计。在实际编程中，**程序的模块化**是必不可少的。因为现实的问题比较复杂，对现实问题进行分析时，把它**转化成为相互联系、不同层次的子问题**，是必须的解决方法。而 call 与 ret 指令对这种分析方法提供了程序实现上的支持。利用 call 和 ret 指令，我们可以用简捷的方法，实现多个相互联系、功能独立的子程序来解决一个复杂的问题。
-​	下面的内容中，我们来看一下子程序设计中的相关问题和解决方法。
-
-### 10.10 参数和结果传递的问题
-
-​	子程序一般都要根据提供的参数处理一定的事务，处理后，将结果(返回值)提供给调用者。其实，我们讨论参数和返回值传递的问题，实际上就是在探讨，应该**如何存储子程序需要的参数和产生的返回值**。
-
-​	比如，设计一个子程序，可以根据提供的 N，来计算 N 的 3 次方。
-
-这里面就有两个问题：
-
-1. 将参数N存储在什么地方？
-
-2. 计算得到的数值，存储在什么地方？
-
-​	很显然，可以用寄存器来存储，可以将参数放到 bx 中；因为子程序中要计算`N*N*N`，可以使用多个 mul 指令，为了方便，可将结果放到 dx 和 ax 中。子程序如下。
-
-```assembly
-; 说明: 计算 N 的 3 次方
-; 参数: (bx) = N
-; 结果: (dx:ax) = N^3
-
-cube:
-	mov ax,bx
-	mul bx
-	mul bx
-	ret
-```
-
-​	注意，我们在编程的时候要注意形成良好的风格，对于**程序应有详细的注释**。**子程序注释信息**应该包含对**子程序的功能、参数和结果**的说明。因为今天写的子程序，以后可能还会用到；自己写的子程序，也很可能要给别人使用，所以一定要有全面的说明。
-
-​	用寄存器来存储参数和结果是常用方法。对于存放参数的寄存器和存放结果的寄存器，调用者和子程序的读写操作恰恰相反：调用者将参数送入参数寄存器，从结果寄存器中取到返回值；子程序从参数寄存器中取到参数，将返回值送入结果寄存器。
-
-【编程】计算 data 段中第一组数据的 3 次方，结果保存在后面一组 dword 单元中。
-
-```assembly
-assume cs:code
-data segment
-	dw 1,2,3,4,5,6,7,8
-	dd 0,0,0,0,0,0,0,0
-data ends
-
-;我们可以用到已经写好的子程序，程序如下：
-
-code segment
-start:
-	mov ax,data
-	mov ds,ax
-	mov si,0		;ds:si指向第一组word单元
-	mov di,16		;ds:di指向第二组dword单元
-	mov cx,8
-s:
-	mov bx,[si]
-	call cube
-	mov [di],ax
-	mov [di+2],dx
-	add si,2		;ds:si指向下一个word单元
-	add di,4		;ds:di指向下一个dword单元
-	loop s
-
-	mov ax,4c00h
-	int 21h
-
-cube:
-	mov ax,bx
-	mul bx
-	mul bx
+	
+	pop si
+	pop bx
+	pop ax
 	ret
 	
-code ends
-end start
-```
+show_str:
+	push si
+	push ax
+	push cx			;子程序要用到cl，所以要存cx
+	push bx
 
-### 10.11 批量数据的传递
-
-​	前面的例程中，子程序 cube 只有一个参数，放在 bx 中。可是如果需要传递的数据有3个、4个或更多直至N个，该怎样存放呢？寄存器的数量终究有限，我们不可能简单地用寄存器来存放多个需要传递的数据。对于返回值，也有同样的问题。
-
-​	在这种情况下，我们将批量数据放到内存中，然后将它们所在内存空间的首地址放在寄存器中，传递给需要的子程序。对于具有批量数据的返回结果，也可用同样的方法。
-
-【典例】设计一个子程序，功能：将一个全是字母的字符串转化为大写。
-
-​	这个子程序需要知道两件事，字符串的内容和字符串的长度。因为字符串中的字母可能很多，所以不便将整个字符串中的所有字母都直接传递给子程序。但是，可以将**字符串在内存中的首地址**放在寄存器中传递给子程序。因为子程序要用到循环，我们可以用 loop 指令，而循环的次数恰恰就是字符串的长度。出于方便的考虑，可以将字符串的长度放到 cx 中。
-
-子程序：
-
-```assembly
-capital: 
-	and byte ptr [si],11011111b 	;将ds:si所指单元中的字母转化为大写 
-	inc si							;ds:si指向下一个单元
-	loop capital
-	ret
-```
-
-将 data 段中的字符串转化为大写：
-
-```assembly
-assume cs:code
-
-data segment
-	db 'conversation'
-data ends
-
-code segment
-start:
-	mov ax,data
-	mov ds,ax
-	mov si,0 		;ds:si指向字符串(批量数据)所在空间的首地址
-	mov cx,12 		;cx存放字符串的长度
-	call capital
-	mov ax,4c00h
-	int 21h
-capital:
-	and byte ptr [si],11011111b
-	inc si
-	loop capital
-	ret
-code ends
-end start
-```
-
-​	注意，除了用了寄存器传递参数外，还有一种通用的方法是**用栈来传递参数**。关于这种技术请参看附注 4。
-
-### 10.12 寄存器冲突的问题
-
-【编程】设计一个子程序，功能：将一个全是字母，以 0 结尾的字符串，转化为大写。
-
-​	程序要处理的字符串以 0 作为结尾符，这个字符串可以如下定义：
-
-```assembly
-db 'conversation',0
-```
-
-​	应用这个子程序，字符串的内容后面一定要有一个 0，标记字符串的结束。子程序可以依次读取每个字符进行检测，如果不是 0，就进行大写的转化；如果是 0，就结束处理。由于可通过检测 0 知道是否已经处理完整个字符串，所以子程序可以不需要字符串的长度作为参数。可以用 jcxz 来检测 0。
-
-```assembly
-;说明：将一个全是字母，以 0 结尾的字符串，转化为大写
-;参数：ds:si 指向字符串的首地址
-;结果：没有返回值
-
-capital:
-	mov cl,[si]
-	jcxz ok
-	and byte ptr [si],11011111b ;将 ds:si 所指单元中的字母转化为大写
-	inc si
-	jmp short capital
-ok: 
-	ret
-```
-
-来看一下这个子程序的应用。
-
-(1) 将 data 段中字符串转化为大写。
-
-```assembly
-assume cs:code
-data segment
-	db 'conversation', 0
-data ends
-```
-
-代码段中的相关程序段如下。
-
-```assembly
-mov ax,data
-mov ds,ax
-mov si,0
-call capital
-```
-
-(2) 将 data 段中的字符串全部转化为大写。
-
-```assembly
-assume cs:code
-data segment
-	db 'word', 0
-	db 'unix', 0
-	db 'wind', 0
-	db 'good', 0
-data ends
-```
-
-​	可以看到，所有字符串的长度都是 5(算上结尾符 0)，使用循环，重复调用子程序 capital，完成对 4 个字符串的处理。完整的程序如下。
-
-```assembly
-code segment
-start: 
-	mov ax,data
-	mov ds,ax
-	mov bx,0
-
-	mov cx,4
-s: 
-	mov si,bx
-	call capital
-	add bx,5
-	loop s
-
-	mov ax,4c00h
-	int 21h
-
-capital: 
-	mov cl,[si]
+show_addr:
+	mov ax,0B800H	
+	mov es,ax		;es关联显存区
+	mov bx,0		;偏移地址bx初始化为0
+	
+	mov al,00A0H	;行偏移计算，只需要8位乘法
+	mul dh
+	add bx,ax		;不用特殊处理ah，因为8位乘法结果直接覆盖ax
+	
+	mov al,0002H	;列偏移计算，只需要8位乘法
+	mul dl
+	add bx,ax
+	
+	mov al,cl		;暂存颜色属性
+show_core:			;打印字符核心代码
+	mov cl,[si]		;先判断是否以0结束
 	mov ch,0
 	jcxz ok
-	and byte ptr [si],11011111b
-	inc si
-	jmp short capital
-ok: 
-	ret
 
-code ends
-
-end start
-```
-
-**问题 10.2** 
-
-这个程序在思想上完全正确，但在细节上却有些错误。
-
-**分析：**
-
-​	问题在于 cx 的使用，主程序要使用 cx 记录循环次数，可是子程序中也使用了 cx，在执行子程序的时候，cx 中保存的循环计数值被改变，使得主程序的循环出错。
-
-​	从上面的问题中，实际上引出了一个一般化的问题：**子程序中使用的寄存器，很可能在主程序中也要使用，造成了寄存器使用上的冲突**。
-
-粗略地看，可以有以下两个方案来避免这种冲突。
-
-1. 在编写调用子程序的程序时，注意看看子程序中有没有用到会产生冲突的寄存器，如果有，调用者使用别的寄存器；
-2.  在编写子程序的时候，不要使用会产生冲突的寄存器。
-
-上面两种方案可行性：
-
-1. 会给调用子程序的程序编写造成很大麻烦，要小心检查可能产生冲突的寄存器，比如主程序的 bx 和 cx 里，cx 寄存器在子程序中用到，主程序循环就不能用。
-2.  第二种方案则完全无法实现，因为编写子程序时不知道未来那个(使用子程序的)主程序的调用情况。
-
-可见，我们上面所设想的两个方案都不可行。我们希望：
-
-1. 编写调用子程序的程序的时候不必关心子程序到底使用了哪些寄存器；
-2. 编写子程序的时候不必关心调用者使用了哪些寄存器；
-3. 不会发生寄存器冲突。
-
-​	解决这个问题的简捷方法是，在**子程序的开始将子程序中所有用到的寄存器中的内容都保存起来，在子程序返回前再恢复**。可以用栈来保存寄存器中的内容。
-
-以后，我们编写子程序的标准框架如下：
-
-```assembly
-子程序开始：
-	子程序中使用的寄存器入栈
-	子程序内容
-	子程序中使用的寄存器出栈
-	返回(ret, retf)
-```
-
-我们改进一下子程序 capital 的设计：
-
-```assembly
-capital:
-	push cx
-	push si
-change:
-	mov cl, [si]
-	mov ch, 0
-	jcxz ok
-	and byte ptr [si],11011111b
-	inc si
-	jmp short change
-
+	mov es:[bx],cl		;字符写入显存区偶数位
+	mov es:[bx+1],al	;字符属性写入显存区奇数位
+	
+	inc si				;处理数据区下一个字符
+	add bx,2			;一次循环写入显存区两个字节
+	jmp short show_core
 ok:
-	pop si
+	pop bx
 	pop cx
+	pop ax
+	pop si
 	ret
+	
+code ends   
+end start  
 ```
 
-要注意寄存器入栈和出栈的顺序(LIFO)。
+* 注`-g <cs:ip>`可以快速从某一段代码开始调试，可以跳过一些你确定正确的代码。
+* 运行这个程序的时候出了一点小插曲，Debug 调试正常，而正常运行文件无响应，原因在于执行 div bx 之前没有把 dx 归零，当时写程序时有考虑 div 执行后再将 dx 归零，但是其实第一条 div 指令之前 dx 寄存器里面就有数了，导致了**除法溢出**，而 debug 加载的时候会对 dx 寄存器进行初始化，所以掩盖了这个问题。
+* 防止除法溢出也可以直接套娃之前的 divdw 子程序，这里就没套娃了
+* 实际上我们并没有把字符串的末尾 0 写入数据区，因为数据区已经初始化为全 0 了。
 
+![10.12.3 dtoc程序运行结果](文档插图/10.12.3 dtoc程序运行结果.png)
 
+<center style="color:#C0C0C0">10.12.3 dtoc程序运行结果</center>
 
-### 附注 4 用栈传递参数
+### 附注 5 公式证明
 
-​	这种技术和高级语言编译器的工作原理密切相关。我们下面结合 C 语言的函数调用，看一下用栈传递参数的思想。
+问题：计算 X/n (X<65536*65536, n≠0)
 
-​	用栈传递参数的原理十分简单，就是由调用者将**需要传递给子程序的参数压入栈中，子程序从栈中取得参数**。我们看下面的例子。
+在计算过程中要保证不会出现除法溢出。
 
-<center style="color:#C0C0C0">表 栈中存储单元示意表</center>
-
-| stack:0000 | ...  | 08         | 09   | 0A     | 0B   | 0C   | 0D   | 0E   | 0F   |
-| ---------- | ---- | ---------- | ---- | ------ | ---- | ---- | ---- | ---- | ---- |
-|            | ...  |            |      | IP     | IP   | a    | a    | b    | b    |
-|            |      |            |      | ↑ss:sp |      |      |      |      |      |
-| push bp    | ...  | bp         | bp   | IP     | IP   | a    | a    | b    | b    |
-| mov bp,sp  | ...  | ↑ss:sp(bp) |      |        |      |      |      |      |      |
-
-​	（注意：栈是由高地址向低地址增长的）
+分析：
+(1) 在计算过程中不会出现除法溢出，也就是说，在计算过程中**除法运算的商要小于 65536**。
+设：
 
 ```assembly
-;说明：计算(a-b)^3，a、b 为字型数据
-;参数：进入子程序时，栈顶存放 IP，后面依次存放 a、b
-;结果：(dx:ax) = (a-b)^3
-
-difcube:
-	push bp
-	mov bp,sp
-	mov ax,[bp+4]     ;将栈中 a 的值送入 ax 中
-	sub ax,[bp+6]     ;减栈中 b 的值
-	mov bp,ax
-	mul bp
-	mul bp
-	pop bp
-	ret 4
+X/n=(H*65536+L)/n=(H/n)*65536+(L/n)
+H=int(X/65536)	;商
+L=rem(X/65536)	;余数
+因为 H<65536 ，L<65536 所以
+将计算 X/n 转化为计算：(H/n)*65536+(L/n) 可以消除溢出的可能性。
 ```
 
-指令 ret n 的含义用汇编语法描述为：
+(2) 将计算 X/n 分解为计算:
+
+​	`(H/n)*65536+(L/n); H=int(X/65536); L=rem(X/65536)`
+
+​	DIV 指令只能得出余数和商，而我们只保留商。余数必然小于除数，一次正确的除法运算只能丢掉一个余数。
+​	我们虽然在具体处理时进行了两次除法运算 H/n 和 L/n；但这实质上是一次除法运算 X/n 问题的分解。也就是说，为保证最终结果的正确，两次除法运算只能丢掉一个余数。
+​	在这个问题中，H/n 产生的余数是绝对不能丢的，因为丢掉了它(设为 r)就相当于丢掉了 `r*65536`(这是一个相当大的误差)。
+​	那么如何处理 H/n 产生的余数呢?
+​	我们知道：`H=int(H/n)*n+rem(H/n)`
+
+所以有：
 
 ```assembly
-pop ip
-add sp,n
+(H/n)*65536+(L/n)
+=[int(H/n)*n+rem(H/n)]/n*65536+(L/n)
+=int(H/n)*65536+rem(H/n)*65536/n+L/n
+=int(H/n)*65536+[rem(H/n)*65536+L]/n
 ```
 
-​	因为用栈传递参数，所以调用者在调用程序的时候要向栈中压入参数，子程序在返回的时候可以用 ret n 指令将栈顶指针修改为调用前的值。调用上面的子程序之前，需要压入两个参数，所以用 ret 4 返回。
-
-​	我们看一下如何调用上面的程序，设 a=3，b=1，下面的程序段计算 (a-b)^3：
+现在将计算 X/n 转化为计算:
 
 ```assembly
-	mov ax,1
-	push ax
-	mov ax,3
-	push ax			;注意参数压栈顺序	
-	call diffcube
+int(H/n)*65536+[rem(H/n)*65536+L]/n
+H=int(X/65536), L=rem(X/65536)
 ```
 
-程序的执行过程中的变化如下。
+在这里要进行两次除法运算:
+第一次: H/n
+第二次: [rem(H/n)*65536+L]/n
 
-(1) 假设栈的初始情况如下：
+我们知道第一次不会产生除法溢出。
+
+现证明第二次:
 
 ```assembly
-1000:0000 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 
-													   ↑ss:sp
+① L≤65535
+② rem(H/n)≤n-1		;除以n的余数余数最大只能为n-1
+由②有:
+③ rem(H/n)*65536≤(n-1)*65536
+由①，③有:
+④ rem(H/n)*65536+L≤(n-1)*65536+65535
+由④有:
+⑤ [rem(H/n)*65536+L]/n≤[(n-1)*65536+65535]/n
+由⑤有:
+⑥ [rem(H/n)*65536+L]/n≤65536-(1/n)
+所以 [rem(H/n)*65536+L]/n 不会产生除法溢出。
+则: X/n=int(H/n)*65536+[rem(H/n)*65536+L]/n
+	H=int(X/65536), L=rem(X/65536)
 ```
 
-(2) 执行以下指令：
-```assembly
-mov ax, 1
-push ax
-mov ax, 3
-push ax
-```
-栈的情况变为：
-
-```assembly
-                                         a     b
-1000:0000 00 00 00 00 00 00 00 00 00 00 03 00 01 00 
-                                         ↑ss:sp
-```
-
-(3) 执行指令 call diffcube，栈的情况变为：
-
-```assembly
-                                      IP     a     b
-1000:0000 00 00 00 00 00 00 00 00 00 XX XX 03 00 01 00 
-                                      ↑ss:sp
-```
-
-(4) 执行指令 push bp，栈的情况变为：
-
-```assembly
-                                      bp    IP     a     b
-1000:0000 00 00 00 00 00 00 00 00 00 XX XX XX XX 03 00 01 00
-                                      ↑ss:sp
-```
-
-(5) 执行指令 mov bp, sp；ss:bp 指向 1000:8
-
-(6) 执行以下指令：
-```assembly
-mov ax,[bp+4]		;将栈中 a 的值送入 ax 中。
-sub ax,[bp+6] 		;减栈中 b 的值
-mov bp,ax
-mul bp
-mul bp
-```
-(7) 执行指令 pop bp，栈的情况变为：
-
-```assembly
-                                          IP    a     b
-1000:0000 00 00 00 00 00 00 00 00 XX XX XX XX 03 00 01 00
-                                        ↑ss:sp
-```
-
-(8) 执行指令 ret 4，栈的情况变为：
-
-```assembly
-1000:0000 00 00 00 00 00 00 00 00 XX XX XX XX 03 00 01 00
-                                                          ↑ss:sp
-```
-
-​	下面，我们通过一个 C 语言程序编译后的汇编语言程序，看一下栈在参数传递中的应用。要注意的是，在 C 语言中，局部变量也在栈中存储。
-**C 程序**
-
-```c
-void add(int,int,int);
-
-main()
-{
-	int a=1;
-	int b=2;
-	int c=0;
-	add(a,b,c);
-	c++;
-}
-
-}
-void add(int a,int b,int c)
-{
-	c=a+b;
-}
-```
-
-编译后的汇编程序
-
-```assembly
-	mov bp,sp
-	sub sp,6
-	mov word ptr [bp-6],0001 ;int a
-	mov word ptr [bp-4],0002 ;int b
-	mov word ptr [bp-2],0000 ;int c
-	push [bp-2]
-	push [bp-4]
-	push [bp-6]
-	call ADDR  
-	add sp,6  
-	inc word ptr [bp-2]  
-
-ADDR:  
-	push bp  
-	mov bp,sp  
-	mov ax,[bp+4]  
-	add ax,[bp+6]  
-	mov [bp+8],ax  
-	mov sp,bp  
-	pop bp  
-	ret
-```
-
-<center style="color:#C0C0C0">表 栈中存储单元示意表</center>
-
-| ss:0               | ...    | ...    | 09     | 0A     | 0B     | 0C     | 0D     | 0E     | 0F     | 10     | ...     |
-| ------------------ | ------ | ------ | ------ | ------ | ------ | ------ | ------ | ------ | ------ | ------ | ------- |
-| 单元内容→          |        |        | ?      | ?      | ?      | ?      | ?      | ?      | ?      | ?      |         |
-|                    |        |        |        |        |        |        |        |        |        | ↑sp/bp |         |
-| sub sp,6           | ...    | ...    | ?      | 01     | 00     | 02     | 00     | 00     | 00     | ...    | ...     |
-| mov wor ...],0000  | ...    | ...    |        | ↑sp    |        |        |        |        |        | ↑bp    |         |
-| **ss:0**           | **00** | **01** | **02** | **03** | **04** | **05** | **06** | **07** | **08** | **09** | ...     |
-|                    | ?      | ?      | ?      | ?      | 01     | 00     | 02     | 00     | 00     | 00     | ...     |
-| push [bp-2]... -6] |        |        |        |        | ↑sp    |        |        |        |        |        | ...     |
-| call ADDR          | ?      | ?      | IP     | IP     | 01     | 00     | 02     | 00     | 00     | 00     | ...     |
-|                    |        |        | ↑sp    |        |        |        |        |        |        |        |         |
-| push bp            | 10     | 00     | IP     | IP     | 01     | 00     | 02     | 00     | 00     | 00     | ...     |
-| mov bp,sp          | ↑sp/bp |        |        |        |        |        |        |        |        |        |         |
-| mov ax,[bp+4]      | ax=1   |        |        |        |        |        |        |        |        |        |         |
-| add ax,[bp+6]      | ax=3   |        |        |        |        |        |        |        |        |        |         |
-| mov [bp+8],ax      | 10     | 00     | IP     | IP     | 01     | 00     | 02     | 00     | 03     | 00     | ...     |
-| mov sp,bp          | ↑sp/bp |        |        |        |        |        |        |        |        |        |         |
-| pop bp             |        |        | ↑sp    |        |        |        |        |        |        |        | ↑bp=10H |
-| ret                | 10     | 00     | IP     | IP     | 01     | 00     | 02     | 00     | 03     | 00     |         |
-|                    |        |        |        |        | ↑sp    |        |        |        |        |        |         |
-| **ss:0**           | ...    | ...    | **09** | **0A** | **0B** | **0C** | **0D** | **0E** | **0F** | **10** | ...     |
-| add sp,6           |        |        |        | ↑sp    |        |        |        |        |        | ↑bp    |         |
-| inc word...-2]     | ...    | 03     | 00     | 01     | 00     | 02     | 00     | 01     | 00     | ...    | ...     |
-
-* 注意，先是用栈初始化了 A、B、C 三个变量，然后又按 C、B、A 顺序压栈了一次，也就是说变量存了两遍，而后面子程序调用都是在用后面压栈的三个变量，这样不会对最初初始化的三个变量造成影响，这也能解释 C 程序为什么在子函数内修改变量的值不会影响主调函数内的变量的值。
-* 第二点注意，弹出栈实际上是栈内的值被“逻辑”上删除了，但是“物理”上，内存单元仍然保留着之前存过的变量的值，但如果又有变量重新入栈，这些值将会被改变。
