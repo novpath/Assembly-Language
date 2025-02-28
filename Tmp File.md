@@ -1,316 +1,323 @@
-### 实验 13 编写、应用中断例程
+## 第 14 章 端口
 
-​	(1) 编写并安装 int 7ch 中断例程，功能为显示一个用 0 结束的字符串，中断例程安装在 0:200 处。
+​	我们前面讲过，各种存储器都和 CPU 的地址线、数据线、控制线相连。CPU 在操控它们的时候，把它们都当作内存来对待，把它们总地看做一个由若干存储单元组成的逻辑存储器，这个逻辑存储器我们称其为**内存地址空间**(可参见 1.15 节)。
 
-> 参数：(dh)=行号，(dl)=列号，(cl)=颜色，ds:si 指向字符串首地址。
->
+​	在 PC 机系统中，和 CPU 通过总线相连接的芯片除各种存储器外，还有以下 3 种芯片。
+1. 各种接口卡(比如，网卡、显卡)上的接口芯片，它们控制接口卡进行工作；
+2. 主板上的接口芯片，CPU 通过它们对部分外设进行访问；
+3. 其他芯片，用来存储相关的系统信息，或进行相关的输入输出处理。
 
-​	以上中断例程安装成功后，对下面的程序进行单步跟踪，尤其注意观察 int、iret 指令执行前后 CS、IP 和栈中的状态。
+​	在这些芯片中，都有一组可以由 CPU 读写的寄存器。这些寄存器，它们在物理上可能处于不同的芯片中，但是它们在以下两点上相同：
+1. 都和 CPU 的总线相连，当然这种连接是通过它们所在的芯片进行的；
+2. CPU 对它们进行读写的时候都通过控制线向它们所在的芯片发出端口读写命令。
+
+​	可见，从 CPU 的角度，将这些寄存器都当作端口，对它们进行统一编址，从而建立了一个统一的端口地址空间。每一个端口在地址空间中都有一个地址。
+
+​	CPU 可以直接读写以下 3 个地方的数据。
+
+1. CPU内部的寄存器；
+2. 内存单元；
+3. 端口。
+
+### 14.1 端口的读写
+
+​	在访问端口的时候，CPU 通过端口地址来定位端口。因为端口所在的芯片和 CPU 通过总线相连，所以，端口地址和内存地址一样，通过地址总线来传送。在 PC 系统中，CPU 最多可以定位 64KB 个不同的端口。则端口地址的范围为 0~65535。
+
+​	对端口的读写不能用 mov、push、pop 等内存读写指令。端口的读写指令只有两条：in 和 out，分别用于从端口读取数据和往端口写入数据。
+
+​	我们看一下CPU执行内存访问指令和端口访问指令时，总线上的信息：
+
+​	(1) 访问内存:
+
+```assembly
+mov ax,ds:[8] ;假设执行前(ds)=0  
+```
+
+​	执行时与总线相关的操作如下所示。  
+
+* ① CPU 通过地址线将地址信息 8 发出
+* ② CPU 通过控制线发出内存读命令，选中存储器芯片，并通过它，将要从中读取数据
+* ③ 存储器将 8 号单元中的数据通过数据线送入 CPU。  
+
+(2) 访问端口：  
+
+```assembly
+in al,60h 	;从 60h 号端口读入一个字节  
+```
+
+执行时与总线相关的操作如下。  
+
+* ① CPU 通过地址线将地址信息 60h 发出
+* ② CPU 通过控制线发出端口读命令，选中端口所在的芯片，并通过它，将要从中读取数据
+* ③ 端口所在的芯片将 60h 端口中的数据通过数据线送入 CPU  
+
+​	注意，在 in 和 out 指令中，只能使用 ax 或 al 来存放从端口中读入的数据或要发送到端口中的数据。访问 8 位端口时用 al，访问 16 位端口时用 ax。  
+
+​	对 0~255 以内的端口进行读写时（可以直接使用立即数）： 
+
+```assembly
+in al,20h 	;从 20h 端口读入一个字节  
+out 20h,al 	;往 20h 端口写入一个字节  
+```
+
+对 256~65535 的端口进行读写时，端口号放在 dx 中：  
+
+```assembly
+mov dx,3f8h 	;将端口号 3f8h 送入 dx  
+in al,dx 		;从 3f8h 端口读入一个字节  
+out dx,al 		;向 3f8h 端口写入一个字节  
+```
+
+### 14.2 CMOS RAM 芯片  
+
+​	下面的内容中，我们通过对 **CMOS RAM 的读写**来体会一下对端口的访问。  
+
+​	PC 机中，有一个 CMOS RAM 芯片，一般简称为 CMOS。此芯片的特征如下。 
+
+* (1) 包含一个实时钟和一个有 128 个存储单元的 RAM 存储器(早期的计算机为 64 个字节)。 
+* (2) 该芯片靠电池供电。所以，关机后其内部的实时钟仍可正常工作，RAM 中的信息不丢失。 
+* (3) 128 个字节的 RAM 中，内部实时钟占用 0~0dh 单元来保存时间信息，其余大部分单元用于保存系统配置信息，供系统启动时 BIOS 程序读取。BIOS 也提供了相关的程序，使我们在开机的时候配置 CMOS RAM 中的系统信息。
+* (4) 该芯片内部有两个端口，端口地址为 70h 和 71h。CPU 通过这两个端口来读写 CMOS RAM。
+* (5) **70h 为地址端口**，存放要访问的 CMOS RAM 单元的地址；**71h 为数据端口**，存放从选定的 CMOS RAM 单元中读取的数据，或要写入到其中的数据。可见，CPU 对 CMOS RAM 的读写分两步进行，比如，读 CMOS RAM 的 2 号单元：
+  * ① 将 2 送入端口 70h；
+  * ② 从端口 71h 读出 2 号单元的内容。
+
+### 14.a 检测点
+
+(1) 编程，读取 CMOS RAM 的 2 号单元的内容。
+
+解析：
+
+* 注意读是 in，写是 out 即可
+* 可能会对 mov 指令中，源操作数和目标操作数顺序与 in/out 指令中的顺序有疑惑，可以对比来看，`mov ax(目标),bx(源)`，`in ax(目标-微处理器),0x1f0(源-外部设备)`，`out 0x80(目标-外部设备),al(源-微处理器)`，可见两者“**目标在左，源在右**”的内在逻辑是一样的。
+
+```assembly
+mov al,2
+out 70h,al
+in al,71h
+```
+
+(2) 编程，向 CMOS RAM 的 2 号单元写 0。
+
+```assembly
+mov al,2
+out 70h,al
+mov al,0
+out 71h,al
+```
+
+### 14.3 shl 和 shr 指令
+
+​	**shl 和 shr (shift left / shift right)**是**逻辑移位指令**，后面的课程中我们要用到移位指令，这里进行一下讲解。
+
+​	shl 是逻辑左移指令，它的功能为：
+
+* (1) 将一个寄存器或内存单元中的数据向左移位；
+* (2) 将最后移出的一位写入 CF 中；
+* (3) 最低位用 0 补充。
+
+指令：
+
+```assembly
+mov al,01001000b 	
+shl al,1 			;将al中的数据左移一位
+```
+
+执行后(al)=10010000b，CF=0。
+
+我们来看一下`shl al,1`的操作过程。
+
+(1) 左移
+
+* 原数据：&ensp;01001000
+* 左移后：01001000
+
+(2) 将最后移出的一位写入 CF 中
+
+* 原数据：01001000
+* 左移后：1001000    CF=0
+
+(3) 最低位用 0 补充
+
+* 原数据：01001000
+* 左移后：10010000
+
+​	如果接着上面，继续执行一条 shl al,1，则执行后：(al)=00100000b，CF=1。shl 指令的操作过程如下。
+
+(1) 左移
+
+* 原数据：&ensp;10010000
+* 左移后：10010000
+
+(2) 将最后移出的一位写入 CF 中
+
+* 原数据：10010000
+* 左移后：0010000     CF=1
+
+(3) 最高位用 0 补充
+
+* 原数据：10010000
+* 左移后：00100000
+
+如果移动位数大于 1 时，必须将移动位数放在 cl 中。
+
+比如，指令：
+
+```assembly
+mov al,01010001b
+mov cl,3
+shl al,cl
+```
+
+执行后(al)=10001000b，因为最后移出的一位是 0，所以 CF=0。
+
+可以看到，将 X 逻辑左移一位，相当于执行 X=X*2。
+
+比如：
+```assembly
+mov al,00000001b 	;执行后(al)=00000001b=1
+shl al,1        	;执行后(al)=00000010b=2
+shl al,1        	;执行后(al)=00000100b=4
+shl al,1        	;执行后(al)=00001000b=8
+mov cl,3
+shl al,cl      	 	;执行后(al)=01000000b=64
+```
+
+shr 是逻辑右移指令，它和 shr 所进行的操作刚好相反。
+
+(1) 将一个寄存器或内存单元中的数据向右移位；
+
+(2) 将最后移出的一位写入 CF 中；
+
+(3) 最高位用 0 补充。
+
+指令：
+```assembly
+mov al,10000001b ;将 al 中的数据右移一位
+shr al,1         ;执行后(al)=01000000b，CF=1。
+```
+
+​	执行后(al)=01000000b，CF=1。
+
+​	如果接着上面，继续执行一条 shr al,1，则执行后：(al)=00100000b，CF=0。
+
+​	如果移动位数大于 1 时，必须将移动位数放在 cl 中。
+
+​	比如，指令：
+
+```assembly
+mov al,01010001b
+mov cl,3
+shr al,cl
+```
+
+​	执行后(al)=00001010b，因为最后移出的一位是 0，所以 CF=0。
+
+​	可以看出将 X 逻辑右移一位，相当于执行 X=X/2。
+
+### 14.b 检测点
+
+​	编程，用加法和移位指令计算(ax)=(ax)*10。
+
+​	提示，(ax)\*10=(ax)\*2+(ax)\*8。
+
+---
+
+解析：
+
+* 左右移动超过 1 位要用 cl。
+* 执行 shl 或 shr 之后，ax 的值就变了，所以考虑可以用一个新寄存器 dx 存储初始的 ax 值，用来左移三位。
+
+```assembly
+mov dx,ax
+shl ax,1
+mov cl,3
+shl dx,cl
+add ax,dx
+```
+
+### 14.4 CMOS RAM 中存储的时间信息
+
+​	在 CMOS RAM 中，存放着当前的时间：年、月、日、时、分、秒。这 6 个信息的长度都为 1 个字节，存放单元为：
+
+​	秒：0 	分：2 	时：4 	日：7 	月：8 	年：9
+
+​	这些数据以 **BCD 码(Binary-Coded Decimal‎)**的方式存放。
+
+​	BCD 码是以 4 位二进制数表示十进制数码的编码方法，如下所示。
+
+| 十进制数码    | 0    | 1    | 2    | 3    | 4    | 5    | 6    | 7    | 8    | 9    |
+| ------------- | ---- | ---- | ---- | ---- | ---- | ---- | ---- | ---- | ---- | ---- |
+| 对应的 BCD 码 | 0000 | 0001 | 0010 | 0011 | 0100 | 0101 | 0110 | 0111 | 1000 | 1001 |
+
+​	比如，数值 26，用 BCD 码表示为：0010 0110。
+
+​	可见，一个字节可表示两个 BCD 码。则 CMOS RAM 存储时间信息的单元中，存储了用两个 BCD 码表示的两位十进制数，高 4 位的 BCD 码表示十位，低 4 位的 BCD 码表示个位。比如，00010100b 表示 14。
+
+【编程】在屏幕中间显示当前的月份。
+
+​	分析，这个程序主要做以下两部分工作。
+(1) 从 CMOS RAM 的 8 号单元读出当前月份的 BCD 码。
+
+​	要读取 CMOS RAM 的信息，首先要向地址端口 70h 写入要访问的单元的地址：
+
+```assembly
+mov al,8
+out 70h,al
+```
+
+然后从数据端口 71h 中取得指定单元中的数据：
+
+```assembly
+in al,71h
+```
+
+(2) 将用 BCD 码表示的月份以十进制的形式显示到屏幕上。
+
+​	我们可以看出，BCD 码值=十进制数码值，则 BCD 码值+30h = 十进制数对应的 ASCII 码。
+
+​	从 CMOS RAM 的 8 号单元读出的一个字节中，包含了用两个 BCD 码表示的两位十进制数，高 4 位的 BCD 码表示十位，低 4 位的 BCD 码表示个位。比如，00010100b 表示 14。
+
+我们需要进行以下两步工作。
+
+​	① 将从 CMOS RAM 的 8 号单元中读出的一个字节，分为两个表示 BCD 码值的数。
+
+```assembly
+mov ah,al 			;al 中为从 CMOS RAM 的 8 号单元中读出的数据
+mov cl,4
+shr ah,cl 			;ah 中为月份的十位数码值
+and al,00001111b 	;al 中为月份的个位数码值
+```
+
+② 显示(ah)+30h和(al)+30h对应的 ASCII 码字符。
+
+完整的程序如下。
 
 ```assembly
 assume cs:code
-data segment
-	db "welcome to masm!",0
-data ends
 code segment
 start: 
-	mov dh,10
-	mov dl,10
-	mov cl,2
-	mov ax,data
-	mov ds,ax
-	mov si,0
-	int 7ch
-	mov ax,4c00h
-	int 21h
-code ends
-end start
-```
-
----
-
-解析：
-
-* 程序思想：本程序做的事情有三件，第一件是设置中断入口地址，第二件是将中断例程传送到入口地址所在内存单元，第三件是实现打印字符串功能的中断例程本身，类似于 show_str 子程序的编写
-* 注意的问题：
-  * int 和 iret 往往是一对同时使用，就像 call 和 ret 一样，不要遗漏
-  * 偏移量先求，之后只需要递增，直到遇到结尾 0 即可
-  * 本题和之前题目不一样的地方在于要把循环写入中断例程内，而非在主函数中循环，其实最后写出来的程序就和之前实验 10 的 show_str 子程序如出一辙
-  * 寄存器 si 是否要压栈的问题，我这里没压栈保护，最后返回的是结尾 0 位置的 si，压栈也没问题，是个好习惯，题目没说要返回结尾的位置，也就不用修改寄存器，所以可以直接`push si`
-* 安装程序与中断例程如下：
-
-```assembly
-assume cs:code
-code segment
-start:
-	mov ax,0
-	mov es,ax
-	mov word ptr es:[7ch*4],200h
-	mov word ptr es:[7ch*4+2],0
+	mov al,8
+	out 70h,al
+	in al,71h
 	
-	mov ax,cs
-	mov ds,ax
-	mov si,offset lp
-	mov ax,0
-	mov es,ax
-	mov di,200h
-	mov cx,offset lpend - offset lp
-	cld
-	rep movsb
+	mov ah,al
+	mov cl,4
+	shr ah,cl
+	and al,00001111b
+	
+	add ah,30h
+	add al,30h
+	
+	mov bx,0b800h
+	mov es,bx
+	mov byte ptr es:[160*12+40*2],ah 	;显示月份的十位数
+	mov byte ptr es:[160*12+40*2+2],al 	;接着显示月份的个位数
 	
 	mov ax,4c00h
 	int 21h
-lp:
-	push ax
-	push es
-	push di
-	mov ax,0b800h
-	
-	mov es,ax
-	mov di,0
-	mov ah,0
-	
-	mov al,160
-	mul dh
-	add di,ax
-	mov al,2
-	mul dl
-	add di,ax
-show_str:
-	cmp byte ptr [si],0
-	je ok
-	
-	mov al,[si]
-	mov es:[di],al
-	mov es:[di+1],cl
-	
-	inc si
-	add di,2
-	
-	jmp short show_str
-ok:
-	pop di
-	pop es
-	pop ax
-	iret
-lpend:
-	nop
 	
 code ends
 end start
 ```
 
-* 运行`lab13a1.exe`安装中断例程，运行`lab13a2.exe`执行主程序，屏幕正确输出字符串：
-
-![13.7 显示字符串中断例程](文档插图/13.7 显示字符串中断例程.png)
-
-<center style="color:#C0C0C0">图13.7 显示字符串中断例程</center>
-
-* 调试结果：
-  * int 执行前，CS=076C，IP=000E，`-d ss:fff0`查看栈中最后三个字的信息为：0E 00 6C 07 A3 01，int 执行后 CS:IP 会变成 0000:0200，而`-d ss:fff0`中最后三个字的信息为：10 00 6C 07 02 72，正好对应着返回时的 IP:0010、CS:076C、72 02H=111001000000010B 正好对应标志寄存器，可以看到 IF=1，也可以知道压栈顺序是 pushf、push cs、push ip。
-  * iret 执行前，CS=0000，IP=0230，栈中最后三个字的信息为：10 00 6C 07 02 72，iret 执行后，CS=076C，IP=0010，栈中最后三个字的信息为：10 00 6C 07 A3 01。
-
-(2) 编写并安装 int 7ch 中断例程，功能为完成 loop 指令的功能。
-
-> 参数：(cx)=循环次数，(bx)=位移。
-
-​	以上中断例程安装成功后，对下面的程序进行单步跟踪，尤其注意观察 int 、 iret 指令执行前后 CS、IP 和栈中的状态。
-
-​	在屏幕中间显示80个“!”。
-
-```assembly
-assume cs:code
-code segment
-start:
-	mov ax,0b800h
-	mov es,ax
-	mov di,160*12
-	mov bx,offset s-offset se 	;设置从标号se到标号s的转移位移
-	mov cx,80
-s:  
-	mov byte ptr es:[di],'!'
-	add di,2
-	int 7ch						;如果(cx)≠0，转移到标号s处
-se:
-	nop
-	mov ax,4c00h
-	int 21h
-code ends
-end start
-```
-
----
-
-解析：
-
-* 程序思想：本程序考察了利用中断例程读取并修改 CS:IP 以实现**段内近跳转**的功能(类似于 loop 指令)
-
-* 注意的问题：
-
-  * 应该先 dec c 再判断 jcxz，因为注意到主函数是先输出字符，然后才进入中断例程，也就是说至少会执行一次显示“!”，类似于 do while 的关系，所以边界条件弄错可能会导致多显示一个“!”。
-  * 本例的`mov bx,offset s-offset se`用于记录程序的转移位移，和`mov cx,offset lpend - offset lp`形式上有些类似，但是后者是用来记录传送程序长度的。
-  * 程序中没有申请栈空间，则默认会使用系统提供的栈空间，而且 MASM 编译器会一直提醒 "no stack segment"
-
-* 调试结果：
-
-  * 执行 int 7ch 前，CS=076A、IP=0015，栈内数据如下：
-
-    ```assembly
-    0769:fff0 00 00 00 00 00 00 00 B8-00 00 15 00 6A 07 A3 01
-    ```
-
-  * 执行 int 7ch 后，CS=0000、IP=0200，栈内数据如下：
-
-    ```assembly
-    0769:fff0 00 00 00 00 00 00 00 B8-00 00 17 00 6A 07 06 72
-    ```
-
-  * 第一次执行 push bp 后，CS=0000、IP=0201，栈内数据如下：
-
-    ```assembly
-    0769:fff0 00 00 01 02 00 00 A3 01-00 00 17 00 6A 07 06 72
-    ```
-
-    可以推测 |00 00 | 17 00 | 6A 07 | 06 72| 分别对应 bp、ip、cs、flag
-
-    这个过程可以发现 bx=FFF7，也就是有符号的 -9，17H+FFF7H=23-9=14=0EH，这个 -9 正是标号 s 的地址减去标号 se 下一个字节地址的差值。
-
-  * 第一次执行 iret 前，CS=0000、IP=020A，栈内数据如下：
-
-    ```assembly
-    0769:fff0 00 B8 00 00 0A 02 00 00-A3 01 0E 00 6A 07 06 72
-    ```
-
-  * 第一次执行 iret 后，CS=076A、IP=000E，栈内数据如下：
-
-    ```assembly
-    0769:fff0 00 B8 00 00 0A 02 00 B8-00 00 0E 00 6A 07 A3 01
-
-* 安装程序与中断例程如下：
-
-```assembly
-assume cs:code
-code segment
-start:
-	mov ax,0
-	mov es,ax
-	mov word ptr es:[7ch*4],200h
-	mov word ptr es:[7ch*4+2],0
-	
-	mov ax,cs
-	mov ds,ax
-	mov si,offset lp
-	mov ax,0
-	mov es,ax
-	mov di,200h
-	mov cx,offset lpend - offset lp
-	cld
-	rep movsb
-	
-	mov ax,4c00h
-	int 21h
-lp:
-	push bp
-	mov bp,sp
-	dec cx
-	jcxz ok
-	add [bp+2],bx
-ok:
-	pop bp
-	iret
-lpend:
-	nop
-	
-code ends
-end start
-```
-
-* 运行结果如下：
-
-![13.7.1 显示一串感叹号中断例程](文档插图/13.7.1 显示一串感叹号中断例程.png)
-
-<center style="color:#C0C0C0">图13.7.1 显示一串感叹号中断例程</center>
-
-(3) 下面的程序，分别在屏幕的第 2、4、6、8 行显示 4 句英文诗，补全程序。
-
-```assembly
-assume cs:code
-code segment
-	s1: db 'Good,better,best,','$'
-	s2: db 'Never let it rest,','$'
-	s3: db 'Till good is better,','$'
-	s4: db 'And better,best.','$'
-	s:  dw offset s1,offset s2,offset s3,offset s4
-	row: db 2,4,6,8
-	
-start:
-	mov ax,cs
-	mov ds,ax
-	mov bx,offset s
-	mov si,offset row
-	mov cx,4
-ok:
-	mov bh,0
-	mov dh,_____
-	mov dl,0
-	mov ah,2
-	int 10h
-	
-	mov dx,_____
-	mov ah,9
-	int 21h
-	_________
-	_________
-	loop ok
-	mov ax,4c00h
-	int 21h
-code ends
-end start
-```
-
-​	完成后编译运行，体会其中的编程思想。
-
----
-
-解析：
-
-* 本题巧妙利用数据区存储了额外的两个数据段，一个数据段用标号 s 表示，存储各行诗集的首地址，另一个数据段用标号 row 表示，存储准备打印的行号数据，设 bx = offset s，si = offset row 这样对应字符串就可以表示为 ds:[bx]、ds:[bx+2]、ds:[bx+4]、ds:[bx+6]，对应行号就可以表示为 ds:[si]、ds:[si+2]、ds:[si+4]、ds:[si+6]
-* 利用了标号及存储在数据区的标号和连续调用三次中断例程简化了整个程序的复杂程度
-
-```assembly
-assume cs:code
-code segment
-	s1: db 'Good,better,best,','$'
-	s2: db 'Never let it rest,','$'
-	s3: db 'Till good is better,','$'
-	s4: db 'And better,best.','$'
-	s:  dw offset s1,offset s2,offset s3,offset s4
-	row: db 2,4,6,8
-start:
-	mov ax,cs
-	mov ds,ax
-	mov bx,offset s		;(bx)=s标号地址
-	mov si,offset row	;(si)=row标号地址
-	mov cx,4
-ok:
-	mov bh,0			;BIOS的10H中断例程入口参数设置，bh(页号)
-	mov dh,[si]			;dh(行号)
-	mov dl,0			;dl(列号)
-	mov ah,2			;10H例程的2号子程序，功能：设置光标位置
-	int 10h
-	
-	mov dx,[bx]			;指向字符串地址
-	mov ah,9			;DOS中21H例程的9号子程序，功能：显示以'$'结尾的字符串
-	int 21h
-	add bx,2			;bx每次自增一个word
-	inc si				;si每次自增一个byte
-	loop ok
-	mov ax,4c00h
-	int 21h
-code ends
-end start
-```
-
-![13.7.2 显示四行诗中断例程](文档插图/13.7.2 显示四行诗中断例程.png)
-
-<center style="color:#C0C0C0">图13.7.2 显示四行诗中断例程</center>
