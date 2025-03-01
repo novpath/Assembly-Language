@@ -321,3 +321,103 @@ code ends
 end start
 ```
 
+### 实验 14 访问 CMOS RAM
+
+​	编程，以“年/月/日 时:分:秒”的格式，显示当前的日期、时间。
+
+​	注意：CMOS RAM 中存储着系统的配置信息，除了保存时间信息的单元外，不要向其他的单元中写入内容，否则将引起一些系统错误。
+
+---
+
+解答：
+
+* 程序思路：指定单元号和偏移量，利用 out/ in 指令从对应单元读出两个字节，右移四位获得十位数，and 运算获得个位数，+30h 得到对应字符的 ASCII码，将上述过程封装成子程序重复此过程即可。注意，数位之间要添加分隔符号“\”以及“:”，对应偏移量也需要变化。
+* 注意的问题：
+  * 很多重复操作可以封装子程序多次调用以简化流程
+  * 子程序内涉及变量 si 的改动，可以不压栈，或者本程序是压栈之后利用 bp 修改。
+
+```assembly
+assume cs:code
+code segment
+start: 
+	mov ax,0b800h				
+	mov es,ax					;es定位显存区
+
+	mov al,9					;指定第 9 单元
+	mov di,160*12+31*2			;偏移量
+	call printime				;打印日期/时间的十位和个位
+	mov byte ptr es:[di],'/'	;打印分隔符
+	add di,2					;指向下一个位置
+	
+	mov al,8
+	call printime
+	mov byte ptr es:[di],'/'
+	add di,2
+	
+	mov al,7
+	call printime
+	add di,2
+	
+	mov al,4
+	call printime
+	mov byte ptr es:[di],':'
+	add di,2
+	
+	mov al,2
+	call printime
+	mov byte ptr es:[di],':'
+	add di,2
+	
+	mov al,0
+	call printime
+	
+	mov ax,4c00h
+	int 21h
+;---
+;名称：打印日期子程序printime
+;参数：端口号、偏移量di
+;返回：无
+;---
+printime:
+	push ax
+	push cx
+	push bx
+	push di
+	push es
+print:
+	out 70h,al
+	in al,71h
+	
+	mov ah,al
+	mov cl,4
+	shr ah,cl
+	and al,00001111b
+	
+	add ah,30h
+	add al,30h
+	
+	mov bx,0b800h
+	mov es,bx
+	
+	mov byte ptr es:[di],ah 	;显示日期十位数
+	mov byte ptr es:[di+2],al 	;接着显示日期的个位数
+	mov bp,sp
+	add word ptr [bp+2],4
+	pop es
+	pop di
+	pop bx
+	pop cx
+	pop ax
+	ret
+	
+	mov ax,4c00h
+	int 21h
+	
+code ends
+end start
+
+```
+
+![14.5 显示日期-时间程序](文档插图/14.5 显示日期-时间程序.png)
+
+<center style="color:#C0C0C0">图14.5 显示日期-时间程序</center>
