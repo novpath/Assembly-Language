@@ -33,7 +33,7 @@ clock_show:
 	shr al,cl				;al 取得十位
 	and ah,00001111b		;ah 取得个位
 	
-	add ax,3030h				;(十位|个位h)转换为字符
+	add ax,3030h				;(个位|十位h)转换为字符
 	mov word ptr format[bx],ax	;写回字符串
 	inc si						;指向下一个单元
 	add bx,3					;指向字符串下一个写入位置
