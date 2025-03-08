@@ -573,8 +573,9 @@ clock_ret:
 	cmp ah,1				;按下 ESC 键退出
 	je clock_out
 	cmp ah,3bH				;按下 F1 键改变颜色
+	jne short clock_ini		;其他按键继续循环
 	inc word ptr [bp+4]		;改变字符颜色属性
-	jne short clock_ini		;其他按键也是继续循环
+	jmp short clock_ini		;按下 F1 键改变颜色后，继续循环
 clock_out:
 	pop ax
 	pop bx
@@ -746,6 +747,8 @@ end start
 ```
 
 * 现在需要写一个子程序从字符栈中读取数据，写回 CMOS 中存放日期、时间的单元。
+  * 务必要记得，从栈中取数时要先将结束符 0 出栈，否则后面所有位都偏移一位，而且结果错误，调试时很容易以为是个位十位搞反了，实际上反过来调试一下也是不对的，于是就发现了这个问题，浪费了不少时间。
+  * 注意一个字节是含两个 BCD 码的，一般来说取高低 4 位是用 and 和 or 相关运算，虽然 add 和 sub 也能实现类似效果，不过不符合习惯。
 
 ```assembly
 ;------------------------------------------------------------------------
@@ -761,6 +764,8 @@ set_clock:
 	
 	call getstr
 	mov di,5
+	mov ah,1		;0 出栈
+	call charstack
 setclock_in:
 	mov ah,1		;出栈功能号 1
 	call charstack 	;字符出栈，输出内容到 al
@@ -774,7 +779,7 @@ setclock_in:
 	shl al,1
 	shl al,1
 	shl al,1
-	add bl,al		;再存十位
+	or bl,al		;再存十位
 	
 	mov al,unit_num[di]
 	out 70h,al
@@ -822,6 +827,13 @@ end start
 #### 5.任务程序
 
 * 上面我们已经将所有任务程序功能都实现了，接下来只需要把它们组合成一个主程序即可。
+* 注意的问题：
+  * 精简代码，修改了时钟子程序的逻辑，不使用 delay 循环清屏而改成进入子程序前清屏一次。
+  * 完善了 int 16h 传输参数进入 setscreen 中时与对应子程序入口地址的映射关系
+  * (可选)热键控制改成只修改前景色
+  * DOSBox 关闭计算器表现的是关闭 DOSBox，无法模拟引导现在的系统以及更改 CMOS 日期、时间的任务，会在之后模拟
+  * 下面这个程序仅仅是能实现最基本的功能，至于界面布局及美观度、修改时钟信息的引导以及边界控制还需完善，但这些设置就是因人而异的了，可以根据喜好调整。
+  * 自底向上编写好大程序之后可以自顶向下完善各个子程序的细节。
 
 ```assembly
 assume cs:code
@@ -833,13 +845,13 @@ stack segment stack
 stack ends
 code segment
 start:
-	mov dh,12
-	mov dl,31
-	mov cx,7
-	call menu
-	
+	mov dh,8
+    mov dl,32
 	mov ax,data
 	mov ds,ax
+	mov cx,7
+	call menu
+
 	mov ah,0
 	int 16h
 	call setscreen
@@ -961,18 +973,19 @@ menuout:
 ;------------------------------------------------------------------------
 setscreen: 
 	jmp short set
-	table dw reset_pc,start_system,clock,set_clock
+	table dw 0,reset_pc,start_system,clock,set_clock	;预留 0 号位，方便和按键对应
 set:
 	push bx
-	
-	cmp ah,3 				;判断功能号是否大于 3
+	push ax
+	sub al,30h				;将 int 16h 传递的 al 中的 ASCII 码转化为数值
+	cmp al,4 				;判断按键是否大于 4
 	ja setret
-	mov bl,ah
+	mov bl,al
 	mov bh,0
 	add bx,bx 				;根据 ah 中的功能号计算对应子程序在 table 表中的偏移，偏移量为 1 个字
-	
 	call word ptr table[bx] ;调用对应的功能子程序
 setret:
+	pop ax
 	pop bx
 	ret
 ;------------------------------------------------------------------------
@@ -1030,6 +1043,7 @@ clock_in:
 	push cx
 	push bx
 	push ax
+	call screen_clear		;清屏
 clock_ini:
 	mov ax,cs
 	mov ds,ax				;★用到了数据标号，将数据段和代码段对齐★
@@ -1070,8 +1084,10 @@ clock_ret:
 	cmp ah,1				;按下 ESC 键退出
 	je clock_out
 	cmp ah,3bH				;按下 F1 键改变颜色
-	inc word ptr [bp+4]		;改变字符颜色属性
 	jne short clock_ini		;其他按键也是继续循环
+	inc word ptr [bp+4]		;改变字符颜色属性
+	and word ptr [bp+4],07H	;改变前景色
+	jmp short clock_ini
 clock_out:
 	pop ax
 	pop bx
@@ -1082,13 +1098,6 @@ clock_out:
 	pop bp
 	ret
 ;------------------------------------------------------------------------
-;名称：delay
-;功能：延迟执行指令
-;参数：无
-;返回：无  
-;------------------------------------------------------------------------
-
-;------------------------------------------------------------------------
 ;名称：set_clock
 ;功能：修改当前日期、时间，显示格式:YYMMDDHHMMSS
 ;参数：扫描码-功能号(ah)，键盘输入日期、时间
@@ -1098,14 +1107,16 @@ set_clock:
 	push di
 	push bx
 	push ax
-	
+	call screen_clear		;清屏
 	call getstr
 	mov di,5
+	mov ah,1		;0 出栈
+	call charstack
 setclock_in:
 	mov ah,1		;出栈功能号 1
 	call charstack 	;字符出栈，输出内容到 al
 	sub al,30h		;个位 ASCII 码转换为 BCD 码
-	mov bl,al		;暂存 al
+	mov bl,al		;低 4 位暂存个位 al
 	
 	mov ah,1
 	call charstack
@@ -1114,7 +1125,7 @@ setclock_in:
 	shl al,1
 	shl al,1
 	shl al,1
-	add bl,al		;再存十位
+	or bl,al		;高 4 位再存十位
 	
 	mov al,unit_num[di]
 	out 70h,al
@@ -1234,5 +1245,14 @@ sret:
 	pop dx
 	pop bx
 	ret
+	
 code ends
 end start
+```
+
+#### 6.DOS 实模式模拟
+
+* 接下来使用 VMware 17 虚拟机中的 FreeDOS 1.3 Floppy Edition 来模拟真实的硬件环境。
+* 由于后续有可能会对软盘数据进行修改，以及对系统日期、时间进行修改，所以要对数据进行备份以及设置还原点（可选用拍摄快照功能）
+
+* 使用 WINImage 将任务文件的`.exe`可执行文件制作成虚拟软盘文件，后缀为`.flp`或者`.img`。
