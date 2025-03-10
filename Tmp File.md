@@ -1,1788 +1,656 @@
-### 课程设计 2
+## 第 18 章 综合研究
 
-#### 0.任务要求
+​	按本书的要求完成了前面所有学习内容的学习者，如果有兴趣用汇编语言对一些相关问题进行一下深入的研究，可以学习本部分内容。
 
-​	阅读下面的材料：
+在这部分内容中，本书将启示我们如何进行独立研究和深度思考。同时使我们：
 
-​	开机后，CPU 自动进入到 FFFF:0 单元处执行，此处有一条跳转指令。CPU 执行该指令后，转去执行 BIOS 中的硬件系统检测和初始化程序。
+​	(1) 认识到汇编语言对于深入理解其他领域知识的重要性。
 
-​	初始化程序将建立 BIOS 所支持的中断向量，即将 BIOS 提供的中断例程的入口地址登记在中断向量表中。
+​	(2) 对前面所学习的汇编语言知识进行融会。
 
-​	硬件系统检测和初始化完成后，调用 int 19h 进行操作系统的引导。
+​	(3) 对用研究的方法进行学习进行体验。
 
-​	如果设为从软盘启动操作系统，则 int 19h 将主要完成以下工作：
+下面看一下我们要研究的问题。
 
-* (1) 控制号 0 号软驱，读取软盘 0 道 0 面 1 扇区的内容到 0:7c00；
+(1) 人们用 C 语言编程时都要用到变量。
 
-* (2) 将 CS:IP 指向 0:7c00。
+比如，程序：打印从“a”到“h”的 8 个字符。
 
-​	软盘的 0 道 0 面 1 扇区中装有操作系统引导程序。int 19h 将其装载到 0:7c00 处后，设置 CPU 从 0:7c00 开始执行此处的引导程序，操作系统被激活，控制计算机。
-
-​	如果在 0 号软驱中没有软盘，或发生软盘 I/O 错误，则 int 19h 将主要完成以下工作：
-
-* (1) 读取硬盘 C 的 0 道 0 面 1 扇区的内容到 0:7c00；
-* (2) 将 CS:IP 指向 0:7c00。
-
-​	这次课程设计的任务是编写一个可以自行启动计算机，不需要在现有操作系统环境中运行的程序。
-
-该程序的功能如下。
-
-​	(1) 列出功能选项，让用户通过键盘进行选择，界面如下。
-
-```assembly
-1)reset pc 			;重新启动计算机
-2)start system 		;引导现有的操作系统
-3)clock 			;进入时钟程序
-4)set clock 		;设置时间
+```c
+main(){
+	int n,ch;
+	ch='a';
+	for(n=0;n<8;n++)
+	{
+        printf("%c\n",ch+n);
+	}
+}
 ```
 
-​	(2) 用户输入“1”后重新启动计算机(提示：考虑 ffff:0 单元)。
+(2) C 语言规定，用户写的 C 语言程序都要从 main 函数开始运行，因此 main 函数又称为主函数。
 
-​	(3) 用户输入“2”后引导现有的操作系统(提示：考虑硬盘 C 的 0 道 0 面 1 扇区)。
+(3) printf 函数可以接收的参数数量不定，我们对此司空见惯，比如：
 
-​	(4) 用户输入“3”后，执行动态显示当前日期、时间的程序。
-
-​	显示格式如下:`年/月/日 时:分:秒`
-
-​	进入此项功能后，一直动态显示当前的时间，在屏幕上将出现时间按秒变化的效果(提示：循环读取 CMOS)。
-
-当按下 F1 键后，改变显示颜色；按下 Esc 键后，返回到主选单(提示：利用键盘中断)。  
-
-​	(5) 用户输入“4”后可更改当前的日期、时间，更改后返回到主选单(提示：输入字符串)。  
-
-​	下面给出几点建议：  
-
-* (1) 在 DOS 下编写安装程序，在安装程序中包含任务程序；  
-* (2) 运行安装程序，将任务程序写到软盘上；  
-* (3) 若要任务程序可以在开机后自行执行，要将它写到软盘的 0 道 0 面 1 扇区上。如果程序长度大于 512 个字节，则需要用多个扇区存放，这种情况下，处于软盘 0 道 0 面 1 扇区中的程序就必须负责将其他扇区中的内容读入内存。 
-
-​	这个程序较为复杂，它用到了我们所学到的所有技术，需要进行仔细分析和耐心地调试。这个程序对于我们的整个学习过程是具有总结性的，希望读者能够尽力完成。
-
----
-
-解析：
-
-* 本课程设计内容特别庞大，涉及到了几乎全部课程内容，如果从整体入手会发现可能无从下手，但是这个程序的子程序很多都是之前或多或少见过、写过的程序，因此从实现功能的子程序入手**自底向上**实现整个程序，顺便复习一下之前学过的子程序。
-
-#### 1.显示字符串
-
-* 菜单键、显示日期/时间等界面都有字符串，所以需要一个字符串显示函数将这些字符串显示出来，并设置字符颜色。
-
-```assembly
-;------------------------------------------------------------------------
-;名称：show_str  
-;功能：在指定的位置，用指定的颜色，显示一个用 0 结束的字符串。  
-;参数：(dh)=行号(取值范围 0~24)，(dl)=列号(取值范围 0~79)，(cl)=颜色，ds:si 指向字符串的首地址  
-;返回：无  
-;------------------------------------------------------------------------
-show_str:
-	push si
-	push dx
-	push cx			
-	push bx
-	push ax
-	
-	mov ax,0B800H	
-	mov es,ax		;es 关联显存区
-	mov bx,0		;偏移地址 bx 初始化为 0
-	
-	mov al,00A0H	;行偏移计算，只需要 8 位乘法
-	mul dh
-	add bx,ax		;不用特殊处理 ah，因为 8 位乘法结果直接覆盖 ax
-	
-	mov al,0002H	;列偏移计算，只需要 8 位乘法
-	mul dl
-	add bx,ax
-	
-	mov al,cl		;暂存颜色属性
-show_core:			;打印字符核心代码
-	mov cl,[si]		;先判断是否以 0 结束
-	mov ch,0
-	jcxz show_out
-
-	mov es:[bx],cl		;字符写入显存区偶数位
-	mov es:[bx+1],al	;字符属性写入显存区奇数位
-	
-	inc si				;处理数据区下一个字符
-	add bx,2			;一次循环写入显存区两个字节
-	jmp short show_core
-show_out:
-	pop ax
-	pop bx
-	pop cx
-	pop dx
-	pop si
-	ret
+```c
+main()
+{
+	printf("hello world!");
+	printf("%d + %d = %d",1,2,1+2);
+}
 ```
 
-#### 2.清屏程序
+​	注意，上面提到了几个关键词：都要用、规定、司空见惯，在看下面的内容的时候再仔细阅读上面的文字，找到这几个关键词。
 
-* 用户切换一个界面，最基本的流程就是要把屏幕上所有字符清空，然后再重新显示新的字符
+思考下面几个问题：
 
-```assembly
-;------------------------------------------------------------------------
-;名称：screen_clear
-;功能：全屏幕字符用空格填充，而字符颜色属性保持不变。  
-;参数：无
-;返回：无  
-;------------------------------------------------------------------------
-screen_clear:
-	push bx
-	push cx
-	push es			;保护现场
-	mov bx,0b800h
-	mov es,bx		;es 设置为显存地址
-	mov bx,0
-	mov cx,2000		;全屏幕 25 行 × 80 列
-screen_clears:
-	mov byte ptr es:[bx],' '	;当前字符置为空格
-	add bx,2					;下一个字符地址
-	loop screen_clears
-	pop es						;恢复现场
-	pop cx
-	pop bx
-	ret
-```
+​	(1) 人们用 C 语言编程时都要用变量，我们就非用不可吗？
 
-#### 3.菜单界面
+​	(2) C 语言规定用户写的程序从 main 函数开始，我们就非要用 main 函数吗？
 
-* 菜单界面有四个字符串，想到用**直接定址表**方法存储各字符串的首地址，然后用显示字符串函数打印再屏幕上。
+​	(3) printf 函数可以接收不定数量的参数司空见惯，我们就不怀疑了吗？
 
-```assembly
-;------------------------------------------------------------------------
-;名称：menu
-;功能：显示菜单栏目  
-;参数：(dh)=行号(取值范围 0~24)，(dl)=列号(取值范围 0~79)，(cl)=颜色
-;返回：无  
-;------------------------------------------------------------------------
-menu:
-	jmp short menu_show
-	
-	linelabel dw line1,line2,line3,line4
-	line1 db '1)reset pc',0
-	line2 db '2)start system',0
-	line3 db '3)clock',0
-	line4 db '4)set clock',0
-menu_show: 
-	push es
-	push ds
-	push si
-	push dx
-	push bx
-	mov bx,cs
-	mov ds,bx				;★用到了数据标号，数据段和代码段对齐，方便调用 show_str 子程序★
-	mov bx,0				;偏移量初始化
-	
-	call screen_clear		;清屏
-menus:
-	;以下用 0,2,4,6 作为相对于 line 的偏移，取得对应的字符串的偏移地址，放在 bx 中
-	mov si,linelabel[bx]	;等价于 mov si,cs:[linelabel+bx]
-	call show_str
-	add bx,2				;移动到下一 line
-	add dh,2				;下移 2 行开始打印
-	cmp bx,6
-	jna menus				;重复此过程，直至打印完四行
-menuout:
-	pop bx
-	pop dx
-	pop si
-	pop ds
-	pop es
-	ret
-```
+我们把问题再精简一下，使其变得更本质：
 
-测试程序`t1.asm`：
+​	(1) 都在用，我们就非得用吗？
+
+​	(2) 规定了，我们就只知道遵守吗？
+
+​	(3) 司空见惯，我们就不怀疑了吗？
+
+​	在很多领域，我们被这些所谓都在用的，规定了的，司空见惯的，蒙蔽了多久呢？如果我们被这些蒙蔽，那么，真正蒙蔽我们的是这些，还是我们自己？
+
+现在我们要研究的 3 个问题：
+
+​	(1) 用 C 语言编程可以不用变量吗？
+
+​	(2) 用 C 语言编程可以不用 main 函数吗？
+
+​	(3) 我们能写一个 printf 函数吗？
+
+注意:
+
+​	(1) 我们使用 TC 2.0 编译器来进行研究，因为这是国内大多数学习者都会使用的 C 语言编译器。
+
+​	(2) 我们的研究所用的基础知识大都是在前面汇编语言的课程中学过的。只有极少数知识是我们前面的课程中没有讲解的，但有前面汇编语言的基础，这些知识学习者都可以通过自己学习和研究掌握。
+
+​	(3) 这部分内容主要是启发学习者进行独立研究和深度思考，一定要注意这一点，相应地调整自己的学习思想。
+
+### 研究试验 1 搭建一个精简的 C 语言开发环境
+
+​	我们要对 C 语言进行深入的研究，就必须从准备一个清晰的 C 语言开发环境开始。
+
+​	我们看下 TC 2.0 的安装目录，有很多的文件和目录，子目录下面还有很多程序和文件。这些程序和文件是我们现在需要在一起，这些程序和文件会对我们研究的问题造成影响吗？问题是，这么多程序和文件都混合在一起，如果其中有某些程序或文件对我们研究的问题有影响，那么，我们容易判断出影响来自哪些程序和文件吗？
+
+​	为了研究的过程清晰明了，我们的原则是：
+
+​	(1) 我们只运行解决当前问题所需要的，我们已知的程序；
+
+​	(2) 所有我们已经知道的程序在解决问题的运行过程中，中需要用到的程序和文件，也都是已知的。
+
+​	这样我们就可以清晰地知道，哪些程序和文件是用干解决那些问题的。
+
+​	这个原则决定了，我们在研究实践中，需要一步步地把我们已知的程序和文件与其他的程序和文件分离开来。
+
+​	按照上面的原则，请完成以下试验。
+
+(1) 在 d 盘建立一个目录(在 Windows 中称为文件夹)tc2.0。在 DOS 环境中，方法如下:
 
 ```assembly
-assume cs:code
-
-code segment
-start:
-	mov dl,32
-	mov dh,8				
-	mov cl,7				;8 行 32 列开始，黑底白字
-	call menu
-	
-	mov ax,4c00h
-	int 21h
-	;-----------------------
-	;需要用到的子程序 menu、screen_clear、show_str 粘贴至此处
-	;-----------------------
-code ends
-end start
+d:\md tc2.0
 ```
 
-![17.4.2 菜单函数测试样例](文档插图/17.4.2 菜单函数测试样例.png)
+​	然后将 tc2.0 的所有文件都拷贝到 d:\tc2.0 目录下。
 
-<center style="color:#C0C0C0">图 17.4.2 菜单函数测试样例</center>
-
-#### 4.菜单功能
-
-* 上面我们只是在屏幕上打印了可视化的界面，并无实际作用，任务要求按键产生对应功能，所以需要读取键盘按键，然后调用对应功能的子函数。
-* 我们可以将这些功能子程序的入口地址存储在一个**直接定址表**中，它们在表中的位置和功能号相对应。对应关系为：功能号*2=对应的功能子程序在地址表中的偏移
+(2) 在 c 盘建立一个目录 minic。在 DOS 环境中，方法如下:
 
 ```assembly
-;------------------------------------------------------------------------
-;名称：setscreen
-;功能：调用菜单栏目对应功能  
-;参数：扫描码-功能号(ah)
-;返回：无  
-;------------------------------------------------------------------------
-setscreen: 
-	jmp short set
-	table dw reset_pc,start_system,clock,set_clock
-set:
-	push bx
-	
-	cmp ah,3 				;判断功能号是否大于 3
-	ja sret
-	mov bl,ah
-	mov bh,0
-	add bx,bx 				;根据 ah 中的功能号计算对应子程序在 table 表中的偏移，偏移量为 1 个字
-	
-	call word ptr table[bx] ;调用对应的功能子程序
-sret:
-	pop bx
-	ret
+c:\md minic
 ```
 
-#### 4.1 重启 pc
+​	这个目录用来存放我们已知的解决问题要用的程序和文件。
 
-* 注意任务所给材料：
+​	注意，一般的产品软件系统，都可以通过设置搜索路径的方式让系统提供的程序可以在相关文件不在相同目录的情况下，也可以找到相关的文件。这个做法可能会导致类似以下的情形:
 
-> 开机后，CPU 自动进入到 FFFF:0 单元处执行，此处有一条跳转指令。CPU 执行该指令后，转去执行 BIOS 中的硬件系统检测和初始化程序。
+​	我们在把一个程序拷贝到一个空的目录后，这个目录下只有这一个程序，然后我们运行它，它可以正确运行，我们就认为这个程序运行过程中不需要别的文件。但是很可能它在运行过程中使用了别的文件，它不是在当前目录下，而是通过系统设置的搜索路径找到的相关文件。
 
-* 所以这个 reset_pc 子程序只需要跳转到 ffff:0 单元即可，即设置 CS:IP 为 ffff:0 
-* 搞不清楚 retf 是先 pop ip 还是先 pop cs 可以这么记，cs 存于高地址，ip 存于低地址，而栈是由高地址向低地址生长，所以入栈时(call far ptr 标号)是 push cs、push ip，出栈时(retf)是 pop ip、pop cs，这样就不会弄错。
-* X86汇编语言，立即数不可以直接压栈，所以需要寄存器中转（而且重启的话寄存器就不用再保存了）。
+​	如上情况的会出现会影响我们对一个程序运行过程中使用哪些文件的掌握，而对一些问题产生错误的判断。
+
+我们可以用两种方法解决这个问题:
+
+​	① 不让设置的默认路径指向包含相关文件的目录;
+
+​	② 把我们所要研究的系统的所有文件都拷贝到一个**不可能是系统设置的搜索路径的目录**中。
+
+​	我们上面用的第二种方法，将 tc2.0 的所有文件，都拷贝到 d:\tc2.0 目录下，因为这个目录基本上不可能被 tc2.0 设置成相关文件的搜索路径。这样我们从这个目录拷贝到其他目录(比如 c:\minic)的程序，在运行过程中如果需要使用 tc2.0 中的相关文件，就会出现文件找不到的错误，我们根据提示信息，就可以知道找不到的是哪个文件，也就可能分析出这个文件是什么作用的。
+
+(3) 把我们(国内大多数学习者都)已知的 tc.exe(集成开发环境) 拷贝到 c:\minic 下:
 
 ```assembly
-;------------------------------------------------------------------------
-;名称：reset_pc
-;功能：重启 pc 机
-;参数：扫描码-功能号(ah)
-;返回：无  
-;------------------------------------------------------------------------
-reset_pc:
-	mov ax,0ffffH
-	push ax
-	mov ax,0H
-	push ax
-	retf
+c:\minic\copy d:\tc2.0\tc.exe
 ```
 
-#### 4.2 引导现有操作系统
-
-* 引导**现有操作系统**，同样是材料题。即模拟 0 号软驱中没有软盘，或发生软盘 I/O 错误，int 19h 需要完成的工作，需要考虑下面两点：
-  * (1) 读取硬盘 C 的 0 道 0 面 1 扇区的内容到 0:7c00；
-  * (2) 将 CS:IP 指向 0:7c00。
-
-* 因为“ CPU 执行 ffff:0 处指令后，转去执行 BIOS 中的硬件系统检测和初始化程序。初始化程序将建立 BIOS 所支持的中断向量，即将 BIOS 提供的中断例程的入口地址登记在中断向量表中”。所以此时 BIOS 已经启动，可以利用第 17 章提到的(BIOS 提供的)int 13h 中断例程来完成
+(4) 运行 tc.exe:
 
 ```assembly
-;------------------------------------------------------------------------
-;名称：start_system
-;功能：引导现有操作系统
-;参数：扫描码-功能号(ah)
-;返回：无  
-;------------------------------------------------------------------------
-start_system:
-	mov ax,0
-	mov es,ax
-	mov bx,7c00h	;es:bx 指向将写入磁盘的数据
-
-	mov al,1		;(al)写入扇区数
-	mov ch,0		;(ch)磁道号
-	mov cl,1		;(cl)扇区号
-	mov dl,80h		;(dl)驱动器号，80h 为 C 盘
-	mov dh,0		;(dh)面号
-
-	mov ah,2		;int 13h 的功能号(2 表示读扇区)
-	int 13h
-	
-	mov ax,0
-	push ax
-	mov ax,7c00h
-	push ax
-	retf				;将 CS:IP 指向 0:7c00
+c:\minic\tc
 ```
 
-#### 4.3 显示当前日期、时间
+​	用 tc 环境中的菜单项“Options”中的“Directories”选项，对 tc 的工作路径进行设置，将所有路径都清空，即都设置为当前路径。然后用“Save options”选项保存设置。
 
-* 同样可以借助**数据标号**实现**日期、时间格式控制**以及**单元号选择**。
-* 注意，这里是先写入字符串，然后打印，所以和之前 14 章有点不一样，要稍作修改：十位在 al，个位在 ah，这样写显示出来才是正确的顺序。 因为写入内存后的顺序是：低位在前，高位在后，打印字符串也是从低位到高位。
+(5) 在 tc.exe 环境中编辑程序 simple.c，保存到 c:\minic 下。程序 simple.c：
+
+```c
+main(){
+	printf("hello world!\n");
+}
+```
+
+(6) 用 tc 环境中菜单项“Compile”中的“Compile to OBJ”，对程序 simple.c 进行编译。看看显示出的提示信息，编译成功了吗？用菜单单项“File”中“Quit”(或按 Alt-X)退出 tc 环境，在 c:\minic 下查找 simple.obj。
+
+(7) 用如下的方法运行 tc.exe:
 
 ```assembly
-;------------------------------------------------------------------------
-;名称：clock
-;功能：显示当前日期、时间，显示格式:年/月/日 时:分:秒
-;参数：扫描码-功能号(ah)
-;返回：无  
-;------------------------------------------------------------------------
-clock:
-	jmp short clock_in
-	format db 'YY/MM/DD HH:MM:SS',0 ;日期、时间字符串模板
-	unit_num db 9,8,7,4,2,0			;要读取的单元号
-clock_in:
-	push bp
-	push si
-	push ds
-	push dx
-	push cx
-	push bx
-	push ax
-
-	mov ax,cs
-	mov ds,ax				;★用到了数据标号，将数据段和代码段对齐★
-	mov si,0				;单元号数据标号步进变量 si
-	mov bx,0				;字符串数据标号步进变量 bx
-clock_show:
-	mov al,unit_num[si]		;从数据标号处取得单元号
-	out 70h,al				;地址端口写入单元号
-	in al,71h				;数据端口读取单元号
-	
-	mov ah,al				;ah 存放单元号中的内容
-	mov cl,4
-	shr al,cl				;al 取得十位
-	and ah,00001111b		;ah 取得个位
-	
-	add ax,3030h				;(十位|个位 h)转换为字符
-	mov word ptr format[bx],ax	;写回字符串
-	inc si						;指向下一个单元
-	add bx,3					;指向字符串下一个写入位置
-	
-	cmp si,6
-	jnb clock_ret
-	jmp clock_show
-clock_ret:
-	mov si,offset format	;指向日期/时间字符串位置
-	call screen_clear		;清屏
-	mov dh,12	
-	mov dl,31				;12 行 31 列居中显示
-	mov bp,sp
-	mov cx,[bp+4]			;取得字符颜色
-	call show_str			;显示字符串
-	pop ax
-	pop bx
-	pop cx
-	pop dx
-	pop ds
-	pop si
-	pop bp
-	ret
+c:\minic\tc simple
 ```
 
-* 测试程序`t2.asm`
+​	因为 simple.obj 文件已经生成，所以我们用 tc 环境中菜单单项“Compile”中的“Link EXE file”，将 simple.obj 连接为 simple.exe。
+
+​	进行连接后，Message 窗口显示出提示信息：“Unable to open input file 'COS.OBJ'”。
+
+​	看看显示出的提示信息，连接成功了吗？在 c:\minic 下查找 simple.exe，能找到吗？
+
+(8) 可看出，tc 进行连接要使用相关文件，但是找不到，所以出错。
+
+​	为解决这个问题，需要从 d:\tc2.0 目录和子目录下查找到相关文件，将其拷贝到 c:\minic 下。
+
+​	当然，也可以用 tc 环境中的 Options 菜单项下的相关功能设置相关文件(如 .obj 文件)所在的目录的方法，解决找不到 .obj 文件和 .lib 文件的问题，但是，为了让学习者能够对此时需要哪些文件，以及这些文件在什么目录下，如何找到这些文件等问题有清晰的感性认识，这里我们不用这样的方法。
+
+​	如果在 TC 2.0 安装目录下和各个子目录下都找不到所需的.obj 文件和.lib 文件，则需要重新安装一套完整的 TC 2.0。
+
+​	想办法把所有 tc.exe 对程序 simple.obj 进行连接生成 .exe 文件必须用到的相关文件都找到，拷贝到 c:\minic。注意，找的是必须用到的。
+
+(9) 用 c:\minic\tc.exe 对 simple.c 进行编译，连接，生成 simple.exe。
+
+### 研究试验 2 使用寄存器
+
+​	我们用什么，不用什么，都要看我们要解决什么问题。搞清楚问题，就知道了我们的需要，然后我们就不会拘泥于一种方法，因为可能有很多方法都可以解决我们要解决的问题。
+
+​	我们为什么必须用变量？因为在编程时我们必须存储数据。那么如果可以用别的方法存储数据，我们就可以不必因此目的而使用变量。
+
+​	用什么方法来存储数据呢？在学习汇编语言时，我们知道如何存储数据？我们把数据存储在寄存器和内存空间中。
+
+​	那么，在 C 语言中如何使用寄存器和内存空间呢？
+
+​	在本次研究试验中，我们研究一下使用寄存器的问题。
+
+​	在汇编语言中，要使用寄存器，必须要给出寄存器名，在 C 语言中也是如此。
+
+​	tc2.0 提供的编译器支持如下寄存器名：
+```assembly
+“_AX”, “_BX”, “_CX”, “_DX”, “_SI”, “_DI”, “_SP”, 
+“_BP”, “_CS”, “_DS”, “_SS”, “_ES”, “_AL”, “_AH”, 
+“_BL”, “_BH”, “_CL”, “_CH”, “_DL”, “_DH”。
+```
+
+从这些寄存器名称，可以看出它们对应的是哪个寄存器。
+
+用 c:\minic 目录下的 tc.exe 完成以下试验：
+
+(1) 编一个程序 url.c。
+
+```c
+main()
+{
+	_AX=1;
+	_BX=1;
+	_CX=2;
+	_AX=_BX+_CX;
+	_AH=_BL+_CL;
+	_AL=_BH+_CH;
+}
+```
+
+把这段程序保存在 c:\\minic 下，然后，编译，连接，生成 url.exe。
+
+(2) 用 Debug 加载 url.exe，用 u 命令查看 url.c 编译后的机器码和汇编代码。
+
+​	思考：main 函数的代码在什么段中？用 Debug 怎样找到 url.exe 中 main 函数的代码？
+
+​	答：main 函数为可执行代码，必然在代码段中，所以通过 U 指令，就可以找到 main 函数代码，其偏移地址为 01FA
+
+(3) 用下面的方法打印出 url.exe 被加载运行时，main 函数在代码段中的偏移地址：
+
+```c
+main()
+{
+	printf("%x\n",main);
+}
+```
+
+​	“%x”指的是按照十六进制格式打印。
+
+​	思考：为什么这个程序能够打印出 main 函数在代码段中的偏移地址？
+
+​	答：main 是一个标号，他在程序中是以**偏移地址** 1fah 的形式存在，最终传递给 printf 打印出来。
+
+(4) 用 Debug 加载 url.exe，根据上面打印出的 main 函数的偏移地址，用 u 命令察看 main 函数的汇编代码。仔细找到 url.c 中每条 C 语句对应的汇编代码。
+
+​	注意：在这里，对于 main 函数汇编代码开始处的 \"push bp mov bp,sp\" 和结尾处的 \"pop bp\"，这里只理解到：这是 C 编译器安排的为函数中可能使用到 bp 寄存器而设置的，就可以了。
+
+(5) 通过 main 函数后面有 ret 指令，我们可以设想：C 语言将函数实现为汇编语言中的子程序。研究下面程序的汇编代码，验证我们的设想。
+
+程序 ur2.c:
+
+```c
+void f(void);
+main()
+{
+	_AX=1; _BX=1; _CX=2;
+	f();
+}
+void f(void)
+{
+	_AX=_BX+_CX;
+}
+```
+
+答：调用子程序(call)就相当于 C 语言中的调用子函数，子程序返回(ret)就相当于 C 语言中的子函数返回，二者对应关系很明显。
+
+### 研究试验 3 使用内存空间
+
+​	寄存器只有十几个，但是内存空间可以很大。那么在 C 语言里如何使用内存空间呢？其实，寄存器也好，内存空间也好，都是存储空间，对于存储空间来说，要使用它们一般都需要给出两个信息：①指明是存储空间所在、是哪个的信息；②指明存储空间有多大类型信息。
+
+​	对于寄存器来说，就需要给出发存器的名称，寄存器的名称中也包含了它们的类型信息。
+
+​	对于内存空间来说，就只需要给出地址(准确地说，是内存空间首地址)和空间存储数据的类型。
+
+​	我们知道，在 C 语言里，用指针型数据来表示内存空间的地址和空间存储数据的类型。比如要向偏移地址为 2000h，存储一个字节的内容空间写入一个字符'a'，我们用如下的方法：
 
 ```assembly
-assume cs:code
-code segment
-start:
-	call clock
-	
-	mov ax,4c00h
-	int 21h
-	;-----------------------
-	;需要用到的子程序 clock、screen_clear、show_str 粘贴至此处
-	;-----------------------
-code ends
-end start
+(char *)0x2000='a';
 ```
 
-* 运行结果如下，发现字体颜色是闪烁的灰底白字，这是因为初始 cx 寄存器的值的影响，使用 r 命令修改 cx = 7 后重新运行，即可看到字符颜色变为黑底白字。
+​	第一个“*”表示访问的是个内存空间;
 
-![17.4.3 显示日期时间程序测试样例](文档插图/17.4.3 显示日期时间程序测试样例.png)
+​	“0x2000”是一个数值(0x 表示十六进制)，“(char *)"里面的“\*”指明了这个数值表示一个内存空间的地址，“char”指明了这个地址是存储 char 型数据的内存空间的地址。
 
-<center style="color:#C0C0C0">图 17.4.3 显示日期时间程序测试样例</center>
-
-##### 4.3.1 动态显示
-
-* 上面只是实现了静态显示当前日期、时间，接下来要实现动态显示日期、时间以及热键控制，就需要循环读取 CMOS 以及键盘中断实现。
-  * 循环读取的速度太快会导致看不清屏幕输出内容，所以要使用 delay 子程序。
+​	当然也可以用指出段地址和偏移地址的方法访问内存空间，比如我们要向地址为 2000:0、存储一个字节的内存空间写入字符'a'，如下：
 
 ```assembly
-;------------------------------------------------------------------------
-;名称：clock(动态显示)
-;功能：显示当前日期、时间，显示格式:年/月/日 时:分:秒
-;参数：扫描码-功能号(ah)
-;返回：无  
-;------------------------------------------------------------------------
-clock:
-	jmp short clock_in
-	format db 'YY/MM/DD HH:MM:SS',0 ;日期、时间字符串模板
-	unit_num db 9,8,7,4,2,0			;要读取的单元号
-clock_in:
-	push bp
-	push si
-	push ds
-	push dx
-	push cx
-	push bx
-	push ax
-clock_ini:
-	mov ax,cs
-	mov ds,ax				;★用到了数据标号，将数据段和代码段对齐★
-	mov si,0				;单元号数据标号步进变量 si
-	mov bx,0				;字符串数据标号步进变量 bx
-clock_show:
-	mov al,unit_num[si]		;从数据标号处取得单元号
-	out 70h,al				;地址端口写入单元号
-	in al,71h				;数据端口读取单元号
-	
-	mov ah,al				;ah 存放单元号中的内容
-	mov cl,4
-	shr al,cl				;al 取得十位
-	and ah,00001111b		;ah 取得个位
-	
-	add ax,3030h				;(十位|个位 h)转换为字符
-	mov word ptr format[bx],ax	;写回字符串
-	inc si						;指向下一个单元
-	add bx,3					;指向字符串下一个写入位置
-	
-	cmp si,6
-	jnb clock_ret
-	jmp clock_show
-clock_ret:
-	mov si,offset format	;指向日期/时间字符串位置
-	call screen_clear		;清屏
-	mov dh,12	
-	mov dl,31				;12 行 31 列居中显示
-	mov bp,sp
-	mov cx,[bp+4]			;取得字符颜色
-	call show_str			;显示字符串
-	
-	call delay				;延迟执行指令
-	jmp short clock_ini		;循环读取
-	
-	pop ax
-	pop bx
-	pop cx
-	pop dx
-	pop ds
-	pop si
-	pop bp
-	ret
-;------------------------------------------------------------------------
-;名称：delay
-;功能：延迟执行指令
-;参数：无
-;返回：无  
-;------------------------------------------------------------------------
-delay:
-	push ax
-	push dx
-	mov dx,1h 				;循环 10000h 次，可以根据自己机器的速度调整循环次数
-	mov ax,0
-s1:
-	sub ax,1
-	sbb dx,0
-	cmp ax,0
-	jne s1
-	cmp dx,0
-	jne s1
-	pop dx
-	pop ax
-	ret
+(char far *)0x20000000='a';
 ```
 
-* 测试程序`t2a.asm`
+​	“far" 指明内存空间的地址是段地址和偏移地址，“0x20000000”中的“0x2000”给出了段地址，“0000”给出了偏移地址。
+
+​	不过这样直接用地址访问内存空间的方式是不安全的，因为，如果这些空间并不是分配给我们的程序使用的空间，这样做就可能改变了别的程序的代码或数据，引起错误。
+
+​	我们可以按照上面的例子，举一反三，以前学过的 C 语言相关知识进行深入的理解。
+
+​	用 c:\minic 目录下的 tc.exe，完成下面的试验。
+
+(1) 编一个程序 uml.c:
 
 ```assembly
-assume cs:code
-code segment
-start:
-	call clock
+main(){
+	* (char *)0x2000='a';
+	* (int *)0x2000=0xf;
+	* (char far *)0x20001000='a';
 	
-	mov ax,4c00h
-	int 21h
-	;-----------------------
-	;需要用到的子程序 clock、delay、screen_clear、show_str 粘贴至此处
-	;-----------------------
-code ends
-end start
+	_AX=0x2000;
+	* (char *)_AX='b';
+	
+	_BX=0x1000;
+	*(char *)(_BX+_BX)='a';
+	*(char far *)(0x20001000+_BX)=*(char *)_AX;
+}
 ```
 
-![17.4.4 动态显示日期时间程序测试样例](文档插图/17.4.4 动态显示日期时间程序测试样例.gif)
+​	把 uml.c 保存在 c:\minic 下，编译，连接生成 um1.exe。然后用 Debug 加载 um1.exe，对 main 函数的汇编代码进行分析，找到每条 C 语句对应的汇编代码；对 main 函数进行单步跟踪，察看相关内存单元的内容。
 
-<center style="color:#C0C0C0">图 17.4.4 动态显示日期时间程序测试样例</center>
+(2) 编一个程序，用一条 C 语句实现屏幕中间显示一个绿色的字符“a”。
 
-##### 4.3.2 热键控制
+​	答：`(int far *)0xb80007d0=0x0261;`
 
-* 当我们需要用热键实现特别的功能时，有两种方法，一种是通过 int 9h 中断例程在处理键盘输入时来实现；另一种是通过调用 int 16h 从键盘缓冲区中读取键盘输入来实现。后者的优点在于不需要重写编写 int 9h 中断例程。所以本题利用 int 16h 中断例程实现热键控制功能。
-  * 不过使用 int 16h 的 0 号功能号来实现有一个其他问题，就是缓冲区无数据时会循环等待，这会影响我们动态刷新的时钟程序，会造成不按键时间就不会动态刷新的问题。
-  * 我们需要使用 int 16h 中 ah=1 的功能号，查询键盘缓冲区，对键盘进行扫描但不等待，并设置标志寄存器中的  ZF，如果 ZF=1 说明键盘没输入，循环读取，如果 ZF=0 说明键盘有输入，接着执行 int 16h  中 ah=0 的功能号，从键盘读数据并存于 al 中。
+(3) 分析下面程序中所有函数的汇编代码，思考相关问题。
+
+```c
+int al,a2,a3;
+void f(void);
+main()
+{
+	int bl,b2,b3;
+	al=0xal;a2=0xa2;a3=0xa3;
+	bl=0xb1;b2=0xb2;b3=0xb3;
+}
+void f(void)
+{
+	int cl,c2,c3;
+	al=0xfal;a2=0xfa2;a3=0xfa3;
+	cl=0xc1;c2=0xc2;c3=0xc3;
+}
+```
+
+​	问题：C 语言将全局变量存放在哪里？将局部变量存放在哪里？每个函数开头的 “push bp mov bp,sp” 有何含义？
+
+​	答：const 修饰的全局变量放在**文字常量区**，未初始化的全局变量放在 **BSS 段**，普通全局变量放在**静态区/全局区**，三者都属于**静态存储区**。局部变量放在**栈区**，属于**动态存储区**。
+
+​	函数开头的两条指令实现了子函数栈帧的初始化，确保函数执行期间栈空间管理的独立性，且不会干扰主调函数的栈的管理。
+
+(4) 分析下面程序的汇编代码，思考相关问题。
 
 ```assembly
-;------------------------------------------------------------------------
-;名称：clock(动态显示 + 热键控制)
-;功能：显示当前日期、时间，显示格式:年/月/日 时:分:秒
-;参数：扫描码-功能号(ah)，ESC 退出，F1 改变颜色
-;返回：无  
-;------------------------------------------------------------------------
-clock:
-	jmp short clock_in
-	format db 'YY/MM/DD HH:MM:SS',0 ;日期、时间字符串模板
-	unit_num db 9,8,7,4,2,0			;要读取的单元号
-clock_in:
-	push bp
-	push si
-	push ds
-	push dx
-	push cx
-	push bx
-	push ax
-clock_ini:
-	mov ax,cs
-	mov ds,ax				;★用到了数据标号，将数据段和代码段对齐★
-	mov si,0				;单元号数据标号步进变量 si
-	mov bx,0				;字符串数据标号步进变量 bx
-clock_show:
-	mov al,unit_num[si]		;从数据标号处取得单元号
-	out 70h,al				;地址端口写入单元号
-	in al,71h				;数据端口读取单元号
+int f(void);
+int a,b,ab;
+main()
+{
+	int c;
+	c=f();
+}
+
+int f(void)
+{
+	ab=a+b;
 	
-	mov ah,al				;ah 存放单元号中的内容
-	mov cl,4
-	shr al,cl				;al 取得十位
-	and ah,00001111b		;ah 取得个位
-	
-	add ax,3030h				;(个位|十位 h)转换为字符
-	mov word ptr format[bx],ax	;写回字符串
-	inc si						;指向下一个单元
-	add bx,3					;指向字符串下一个写入位置
-	
-	cmp si,6
-	jnb clock_ret
-	jmp clock_show
-clock_ret:
-	mov si,offset format	;指向日期/时间字符串位置
-	call screen_clear		;清屏
-	mov dh,12	
-	mov dl,31				;12 行 31 列居中显示
-	mov bp,sp
-	mov cx,[bp+4]			;取得字符颜色
-	call show_str			;显示字符串
-	
-	call delay				;延迟执行指令，不能放在 je 指令前面，因为运算指令会影响 ZF 的值
-	mov ah,1				;1 号功能：查询键盘缓冲区，对键盘进行扫描但不等待，并设置标志寄存器中的 ZF
-	int 16h					;ZF=0，表示有键盘操作，AL 中存放当前输入的 ASCII 码，AH 存放输入字符的扩展码
-	je short clock_ini		;若 ZF=1，表示无键盘输入，则循环读取(可以省去 cmp 步骤，因为本质上 je 就是查 ZF)
-	
-	mov ah,0				;0 号功能：从键盘读数据并存于 al 中
-	int 16h	
-	cmp ah,1				;按下 ESC 键退出
-	je clock_out
-	cmp ah,3bH				;按下 F1 键改变颜色
-	jne short clock_ini		;其他按键继续循环
-	inc word ptr [bp+4]		;改变字符颜色属性
-	jmp short clock_ini		;按下 F1 键改变颜色后，继续循环
-clock_out:
-	pop ax
-	pop bx
-	pop cx
-	pop dx
-	pop ds
-	pop si
-	pop bp
-	ret
+	return ab;
+}
 ```
 
-* 测试程序`t2b.asm`
+​	问题：C 语言将函数的返回值存放在哪里？
 
-```assembly
-assume cs:code
-code segment
-start:
-	call clock
-	
-	mov ax,4c00h
-	int 21h
-	;-----------------------
-	;需要用到的子程序 clock、delay、screen_clear、show_str 粘贴至此处
-	;-----------------------
-code ends
-end start
+​	答：call 指令后面有`mov [bp+idata],ax`（idata 可以是正数、负数或者零），说明函数的返回值是先用 ax 寄存器暂存，然后存回栈中的。
+
+(5) 下面的程序向安全的内存空间写入从“a”到“h”的 8 个字符，理解程序的含义，深入理解相关的知识。(注意：请自己学习、研究 malloc 函数的用法)
+
+```c
+#define Buffer ((char *)*(int far *)0x200)
+main()
+{
+	Buffer=(char *)malloc(20);
+	Buffer[10]=0;
+	while(Buffer[10]!=8)
+	{
+		Buffer[Buffer[10]]='a'+Buffer[10];
+		Buffer[10]++;
+	}
+	free(Buffer);
+}
 ```
 
-![17.4.5 热键控制日期时间程序测试样例](文档插图/17.4.5 热键控制日期时间程序测试样例.gif)
+### 研究试验 4 不用 main 函数编程
 
-<center style="color:#C0C0C0">图 17.4.5 热键控制日期时间程序测试样例</center>
+​	在本研究试验中，我们看看如何不用 main 函数，编写可以正确运行的程序。我们用一个简单的程序来进行研究。
 
-#### 4.4 更改当前日期、时间
+​	程序 f.c:
 
-* CMOS 内部实时钟占用 0~0dh 单元来保存时间信息，所以实验目标是修改其中记录时间信息的数据达到更改当前日期、时间的目的。
-* 用户输入功能的实现可以使用 17 章“输入字符串”相关内容。
-
-* 需要复习字符栈有关内容，为什么需要搞一个字符栈？因为一般的栈都是以一个字来进行的，按字节处理的字符栈最终输入、输出更方便而且字符顺序更符合直觉。
-
-* 程序 t3.asm：
-
-```assembly
-;------------------------------------------------------------------------
-;子程序：接收字符串输入的子程序 getstr
-;参数说明：(ah)=功能号，0 表示入栈，1 表示出栈，2 表示显示；
-;返回：无；
-;ds:si 指向字符栈空间；
-;------------------------------------------------------------------------
-getstr:
-	push ax
-getstrs:
-	mov ah,0
-	int 16h			;读取缓冲区的字符
-	cmp al,20h
-	jb nochar 		;ASCII 码小于 20h，说明不是字符
-	mov ah,0
-	call charstack 	;字符入栈
-	mov ah,2
-	call charstack 	;显示栈中的字符
-	jmp getstrs
-nochar:
-	cmp ah,0eh		;退格键的扫描码
-	je backspace 	
-	cmp ah,1ch		;Enter 键的扫描码
-	je enter 		
-	jmp getstrs
-backspace:
-	mov ah,1
-	call charstack 	;字符出栈
-	mov ah,2
-	call charstack 	;显示栈中的字符
-	jmp getstrs
-enter:
-	mov al,0
-	mov ah,0
-	call charstack 	;0 入栈，作为字符串结尾
-	mov ah,2
-	call charstack 	;显示栈中的字符
-	pop ax
-	ret
-;------------------------------------------------------------------------
-;子程序：字符栈 charstack 的入栈、出栈和显示 
-;参数说明：(ah)=功能号，0 表示入栈，1 表示出栈，2 表示显示；
-;ds:si 指向字符栈空间；
-;对于 0 号功能：(al)=入栈字符；
-;对于 1 号功能：(al)=返回的字节；
-;对于 2 号功能：(dh)、(dl)=字符串在屏幕上显示的行、列位置。
-;------------------------------------------------------------------------
-charstack:
-	jmp short charstart
-	subfun dw charpush,charpop,charshow
-	top dw 0							;栈顶
-charstart: 
-	push bx
-	push dx
-	push di
-	push es
-
-	cmp ah,2				;功能号超出范围则跳出程序
-	ja sret
-	mov bl,ah				;bx 读取数据标号偏移量 = 功能号*2
-	mov bh,0
-	add bx,bx				
-	jmp word ptr subfun[bx]	;跳转执行子程序
-charpush:
-	mov bx,top				;从 top 位置开始入栈
-	mov [si][bx],al			;等价于 mov [si+bx],al
-	inc top					;先入栈，再 top++ 说明 top 指向的是栈顶元素后一个位置
-	jmp sret
-charpop:
-	cmp top,0				;检测是否为空，空则退出
-	je sret
-	dec top					;top 指针先减少，指向栈顶元素后再出栈
-	mov bx,top
-	mov al,[si][bx]			;al 存放字符栈弹出的元素
-	jmp sret
-charshow:
-	mov bx,0b800h
-	mov es,bx
-	mov al,160
-	mov ah,0
-	mul dh
-	mov di,ax
-	add dl,dl
-	mov dh,0
-	add di,dx					;计算显示字符偏移量 行×160+列×2
-
-	mov bx,0
-charshows: 
-	cmp bx,top					;检查栈是否为空
-	jne noempty
-	mov byte ptr es:[di],' '
-	jmp sret					;若为空，则打印空格符(下一个字符位置清屏)后退出
-noempty:
-	mov al,[si][bx]				
-	mov es:[di],al				;不为空则取出栈顶元素并显示
-	mov byte ptr es:[di+2],' '	;下一个字符置为空格(下一个字符位置清屏)
-	inc bx						;移动到下一个元素
-	add di,2					;移动到下一个字符位置
-	jmp charshows
-sret:
-	pop es
-	pop di
-	pop dx
-	pop bx
-	ret
+```c
+f()
+{
+	*(char far *) (0xb8000000+160*10+80)='a';
+	*(char far *) (0xb8000000+160*10+81)=2;
+}
 ```
 
-测试程序`t3.asm`
+​	下面，我们研究如何用 tc.exe 对 f.c 进行编译，连接，生成可正确运行的 f.exe。
+
+​	我们用 c:\minic 下的 tc.exe 完成以下试验。
+
+(1) 把程序 f.c 保存到 c:\minic 下，对其进行编译，连接。思考相关的问题。
+
+问题：
+
+​	①编译和连接哪个环节会出问题？
+
+​	②显示出的错误信息是什么？
+
+​	③这个错误信息可能与哪个文件相关？
+
+答：
+
+​	①编译会成功而连接会出错
+
+​	②错误信息：undefined symbol '_main' in module C0S
+
+​	③错误信息和 c0s 文件夹有关，删除 c0s 文件夹后，错误信息会变成 linker error: Unable to open input file 'C0S.OBJ'，可以说明 link 和 c0s 文件夹有关，而且 main 函数定义在 C0S 文件中。
+
+(2) 用学习汇编语言时使用的 link.exe 对 tc.exe 生成的 f.obj 文件进行连接，生成 f.exe。用 Debug 加载 f.exe，察看整个程序的汇编代码。思考相关的问题。
+
+问题：
+
+​	① f.exe 的程序代码总共有多少字节？
+
+​	② f.exe 的程序能正确返回吗？
+
+​	③ f 函数的偏移地址是多少？
+
+答：
+
+​	①实际代码长度 29 字节，连接后整个程序占 541 字节。push bp、mov bp,sp、pop bp 共占 1+2+1=4 字节，函数体占 25 字节。
+
+​	②无法正确返回，debug 模式下 U 命令查看可以发现没有 mov ax,4c00h、int 21。
+
+​	③偏移地址：00H
+
+(3) 写一个程序 m.c。
+
+```c
+main()
+{
+	*(char far *)0xb8000000+160*10+80)='a';
+	*(char far *)0xb8000000+160*10+81)=2;
+}
+```
+
+​	用 tc.exe 对 m.c 进行编译，连接，生成 m.exe。用 Debug 察看 m.exe 整个程序的汇编代码。思考相关的问题。
+
+问题：
+
+​	① m.exe 的程序代码总共有多少字节？
+
+​	② m.exe 能正确返回吗？
+
+​	③ m.exe 程序中的 main 函数和 f.exe 中的 f 函数的汇编代码有何不同？
+
+答：
+
+​	① 25 字节，恰好比之前的 f() 函数少了 push bp、mov bp,sp、pop bp 共占 1+2+1=4 字节指令。
+
+​	② 可以正确返回，主函数调用后有 mov ax,4c00h、int 21。
+
+​	③ 除了标号名称不同外，f() 函数比 main() 函数多了一条 ret 指令。
+
+(4) 用 Debug 对 m.exe 进行跟踪：①找到对 main 函数进行调用的指令的地址；②找到整个程序返回的指令。注意：使用 g 命令和 p 命令。
+
+答：
+
+​	① 找 call 01FA 的指令的地址即可，偏移地址为 011AH
+
+​	② 找  mov ax,4c00h、int 21 两条指令位置即可(注意，实际上是 mov ah,4c、mov al,[BP+2] 两条指令构成的 mov ax,4c00h，不要看漏了)，偏移地址 0156H。
+
+(5) 思考如下几个问题：
+
+​	①对 main 函数调用的指令和程序返回的指令是哪里来的？
+
+​	②没有 main 函数时，出现的错误信息里有和“cos”相关的信息；而前面在搭建开发环境时，没有 cos.obj 文件 tc.exe 就无法对程序进行连接。是不是 tc.exe 把 cos.obj 和用户程序的.obj 文件一起进行连接生成.exe 文件？
+
+​	③对用户程序的 main 函数进行调用的指令和程序返回的指令是否就来自 cos.obj 文件？
+
+​	④我们如何看到 cos.obj 文件中的程序代码呢？
+
+​	⑤cos.obj 文件里有没有我们设想的代码吗？
+
+答：
+
+​	①来自于 c0s.obj 文件
+
+​	②是
+
+​	③对的，之前去掉该文件后会发现无法成功连接。
+
+​	④对目录下的 c0s.obj 编译成 .exe 文件，然后 debug 模式下用 u 命令查看。
+
+​	⑤有
+
+(6) 用 link.exe 对 c:\minic 目录下的 c0s.obj 进行连接，生成 c0s.exe。
+
+​	用 Debug 分别察看 c0s.exe 和 m.exe 的汇编代码。注意：从头开始察看，两个文件中的程序代码有何相同之处？
+
+答：
+
+​	二者头尾部分二进制代码相似度很高。
+
+(7) 用 Debug 找到 m.exe 中调用 main 函数的 call 指令的偏移地址，从这个偏移地址开始向后察看 10 条指令；然后用 Debug 加载 c0s.exe，从相同的偏移地址开始向后察看 10 条指令。对两处的指令进行对比。
+
+答：
+
+​	二者形式很相近，只是调用 call 命令后面的偏移地址不同。
+
+(8) 从上我们可以看出，tc.exe 把 c0s.obj 和用户.obj 文件一同进行连接，生成.exe 文件。按照这个方法生成的.exe 文件中的程序的运行过程如下。
+
+​	① c0s.obj 里的程序先执行，进行相关的初始化，比如，申请资源、设置 DS、SS 等寄存器；
+
+​	② c0s.obj 里的程序调用 main 函数，从此用户程序开始运行；
+
+​	③ 用户程序从 main 函数返回到 c0s.obj 的程序中；
+
+​	④ c0s.obj 的程序接着运行，进行相关的资源释放，环境恢复等工作；
+
+​	⑤ c0s.obj 的程序调用 DOS 的 int 21h 例程的 4ch 号功能，程序返回。
+
+​	看来，C 程序必须从 main 函数开始，是 C 语言的规定，这个规定不是在编译时保证的（tc.exe 对 f.c 的编译是可以通过的，也不是连接的时候保证的(虽然，tc.exe 文件对 f.obj 文件不能连接成 f.exe，但 link.exe 却可以），而是用如下的机制保证的。
+
+​	首先，C 开发系统提供了用户写的应用程序正确运行所必须的初始化和程序返回等相关程序，这些程序存放在相关的.obj 文件（比如，c0s.obj）中。
+
+​	其次，需要将这些文件和用户.obj 文件一起进行连接，才能生成可正确运行的.exe 文件。
+
+​	第三，连接在用户.obj 文件前面的由 C 语言开发系统提供的 .obj 文件里的程序要对 main 函数进行调用。
+
+​	基于这种机制，我们只要改写 c0s.obj，让它调用其他函数，编程时就可以不写 main 函数了。
+
+​	下面，我们用汇编语言编一个程序 c0s.asm，然后把它编译为 c0s.obj，替代 c:\minic 目录下的 c0s.obj。
+
+程序 c0s.asm：
 
 ```assembly
 assume cs:code
 data segment
-	db 32 dup (0)		;日期/时间数据存放区
-data ends
-code segment
-start:
-	mov dh,12
-	mov dl,31
-	mov ax,data
-	mov ds,ax
-	call getstr
+	db 128 dup (0)
+data ends  
+code segment  
+start: 
+	mov ax,data  
+	mov ds,ax  
+	mov ss,ax  
+	mov sp,128
 	
-	mov ax,4c00h
-	int 21h
-	;-----------------------
-	;需要用到的子程序 getstr、charstack 粘贴至此处
-	;-----------------------
+	call s
+	
+	mov ax,4c00h  
+	int 21h  
+s:
+
 code ends
-end start
+
+end start  
 ```
 
-* 现在需要写一个子程序从字符栈中读取数据，写回 CMOS 中存放日期、时间的单元。
-  * 务必要记得，从栈中取数时要先将结束符 0 出栈，否则后面所有位都偏移一位，而且第一位结果计算就是错误的，调试时很容易以为是个位十位搞反了，实际上反过来调试一下也是不对的，于是就发现了这个问题，浪费了不少时间。
-  * 注意一个字节是含两个 BCD 码的，一般来说取高、低 4 位是用 and 和 or 相关运算，虽然 add 和 sub 也能实现类似效果，不过不符合习惯。
+​	用 masm.exe 对 c0s.asm 进行编译，生成 c0s.obj，把这个 c0s.obj 复制到 c:\minic 目录下覆盖由 tc2.0 提供的 c0s.obj。  
 
-```assembly
-;------------------------------------------------------------------------
-;名称：set_clock
-;功能：修改当前日期、时间，显示格式:YYMMDDHHMMSS
-;参数：扫描码-功能号(ah)，键盘输入日期、时间
-;返回：无
-;------------------------------------------------------------------------
-set_clock:
-	push di
-	push bx
-	push ax
+(9) 在 c:\minic 目录下，用 t.exe 将 f.c 重新进行编译，连接，生成 f.exe。这次能通过连接吗？f.exe 可以正确运行吗？用 Debug 察看 f.exe 的汇编代码。  
+
+​	答：能连接，也可以正确运行。
+
+(10) 在新的 c0s.obj 的基础上，写一个新的 f.c，向安全的内存空间写入从“a”到“h”的 8 个字符。分析、理解 f.c。
+
+程序 f.c:
+
+```c
+#define Buffer ((char * )*(int far *)0x200)
+f()
+{
+	Buffer=0;
 	
-	call getstr
-	mov di,5
-	mov ah,1		;0 出栈
-	call charstack
-setclock_in:
-	mov ah,1		;出栈功能号 1
-	call charstack 	;字符出栈，输出内容到 al
-	sub al,30h		;个位 ASCII 码转换为 BCD 码
-	mov bl,al		;暂存 al
+	Buffer[10]=0;
 	
-	mov ah,1
-	call charstack
-	sub al,30h
-	shl al,1
-	shl al,1
-	shl al,1
-	shl al,1
-	or bl,al		;再存十位
+	while(Buffer[10]!=8)
+	{
+		Buffer[Buffer[10]]='a'+Buffer[10];
 	
-	mov al,unit_num[di]
-	out 70h,al
-	mov al,bl
-	out 71h,al
-	
-	cmp di,0
-	je setclock_ret
-	dec di
-	jmp setclock_in
-setclock_ret:
-	pop ax
-	pop bx
-	pop di
-	ret
+		Buffer[10]++;
+	}
+}
 ```
 
-* 测试样例`t3a.asm`
+​	注意，完成上面的相关试验后，把 c:\minic 目录下的 c0s.obj 文件恢复为 tc2.0 提供的 c0s.obj 文件。
 
-* 由于 DOSBox 是一款 DOS 模拟器，其实前面所谓的从 CMOS 读日期、时间的指令都是在从系统中获取时间，所以修改 CMOS 中的日期和时间数据是无效的，需要在真实的机器或者其他模拟器上实现。
+### 研究试验 5 函数如何接收不定数量的参数
 
-```assembly
-assume cs:code
-data segment
-	db 32 dup (0)		;日期/时间数据存放区，输入格式：YYMMDDHHMMSS
-data ends
-code segment
-start:
-	mov dh,12
-	mov dl,31
-	mov ax,data
-	mov ds,ax
-	call set_clock
-	call clock
-	
-	mov ax,4c00h
-	int 21h
-	;-----------------------
-	;需要用到的子程序 clock(静态显示版本)、set_clock、getstr、charstack 粘贴至此处
-	;-----------------------
-code ends
-end start
+用 c:\minic 下的 tc.exe 完成下面的试验。
+
+(1) 写一个程序 a.c:
+
+```c
+void showchar(char a,int b);
+
+main()
+{
+	showchar('a',2);
+}
+
+void showchar(char a,int b)
+{
+	*(char far *)(0xb8000000+160*10+80)=a;
+	*(char far *)(0xb8000000+160*10+81)=b;
+}
 ```
 
-#### 5.任务程序
+​	用 tc.exe 对 ac 进行编译，连接，生成 a.exe。用 Debug 加载 a.exe，对函数的汇编代码进行分析。解答这两个问题： main 函数是如何给 showchar 传递参数的？showchar 是如何接收参数的？
 
-* 上面我们已经将所有任务程序功能都实现了，接下来只需要把它们组合成一个主程序即可。
+答：
 
-* 注意的问题：
-  * 精简代码，修改了时钟子程序的逻辑，不使用 delay 循环清屏而改成进入子程序前清屏一次。
-  
-  * 完善了 int 16h 传输参数进入 setscreen 中时与对应子程序入口地址的映射关系
-  
-  * (可选)热键控制改成只修改前景色
-  
-  * DOSBox 关闭计算器表现的是关闭 DOSBox，无法模拟引导现在的系统以及更改 CMOS 日期、时间的任务，会在之后模拟
-  
-  * 下面这个程序仅仅是能实现最基本的功能，至于界面布局及美观度、修改时钟信息的引导以及边界控制还需完善，但这些设置就是因人而异的了，可以根据喜好调整。不写也是避免太多无关代码引入导致无法突出代码重点。
-  
-    （注：正常来说，这种和用户交互的软件的引导是一定要清晰规范的，否则会给使用者造成很大麻烦，本人曾经深受其害 TAT）
-  
-  * 自底向上编写好大程序之后可以自顶向下完善各个子程序的细节。
+​	① main 将参数压入栈中传给 showchar，showchar 按通过 [bp+idata] 从栈中取参数。
 
-```assembly
-assume cs:code
-data segment
-	db 32 dup (0)		;日期/时间数据存放区，输入格式：YYMMDDHHMMSS
-data ends
-stack segment stack
-	db 32 dup (0)
-stack ends
-code segment
-start:
-	mov dh,8
-	mov dl,32
-	mov ax,data
-	mov ds,ax
-	mov cx,7
-	call menu
+​	② 注意函数传入参数入栈顺序是从**右到左**。
 
-	mov ah,0
-	int 16h
-	call setscreen
-	
-	jmp short start
-	mov ax,4c00h
-	int 21h
-;------------------------------------------------------------------------
-;名称：show_str  
-;功能：在指定的位置，用指定的颜色，显示一个用 0 结束的字符串。  
-;参数：(dh)=行号(取值范围 0~24)，(dl)=列号(取值范围 0~79)，(cl)=颜色，ds:si 指向字符串的首地址  
-;返回：无  
-;------------------------------------------------------------------------
-show_str:
-	push si
-	push dx
-	push cx			
-	push bx
-	push ax
-	
-	mov ax,0B800H	
-	mov es,ax		;es 关联显存区
-	mov bx,0		;偏移地址 bx 初始化为 0
-	
-	mov al,00A0H	;行偏移计算，只需要 8 位乘法
-	mul dh
-	add bx,ax		;不用特殊处理 ah，因为 8 位乘法结果直接覆盖 ax
-	
-	mov al,0002H	;列偏移计算，只需要 8 位乘法
-	mul dl
-	add bx,ax
-	
-	mov al,cl		;暂存颜色属性
-show_core:			;打印字符核心代码
-	mov cl,[si]		;先判断是否以 0 结束
-	mov ch,0
-	jcxz show_out
+​	③ 注意栈中除了与 showchar 字符偏移相关的参数，还有调用子程序，会将 bp 压入栈，调用 call 会将 IP 压入栈，注意正确描述 bp 指针的位置，才能把参数正确传递给 showchar。
 
-	mov es:[bx],cl		;字符写入显存区偶数位
-	mov es:[bx+1],al	;字符属性写入显存区奇数位
-	
-	inc si				;处理数据区下一个字符
-	add bx,2			;一次循环写入显存区两个字节
-	jmp short show_core
-show_out:
-	pop ax
-	pop bx
-	pop cx
-	pop dx
-	pop si
-	ret
-;------------------------------------------------------------------------
-;名称：screen_clear
-;功能：全屏幕字符用空格填充，而字符颜色属性保持不变。  
-;参数：无
-;返回：无  
-;------------------------------------------------------------------------
-screen_clear:
-	push bx
-	push cx
-	push es			;保护现场
-	mov bx,0b800h
-	mov es,bx		;es 设置为显存地址
-	mov bx,0
-	mov cx,2000		;全屏幕 25 行 × 80 列
-screen_clears:
-	mov byte ptr es:[bx],' '	;当前字符置为空格
-	add bx,2					;下一个字符地址
-	loop screen_clears
-	pop es						;恢复现场
-	pop cx
-	pop bx
-	ret
-;------------------------------------------------------------------------
-;名称：menu
-;功能：显示菜单栏目  
-;参数：(dh)=行号(取值范围 0~24)，(dl)=列号(取值范围 0~79)，(cl)=颜色
-;返回：无  
-;------------------------------------------------------------------------
-menu:
-	jmp short menu_show
-	
-	linelabel dw line1,line2,line3,line4
-	line1 db '1)reset pc',0
-	line2 db '2)start system',0
-	line3 db '3)clock',0
-	line4 db '4)set clock',0
-menu_show: 
-	push es
-	push ds
-	push si
-	push dx
-	push bx
-	mov bx,cs
-	mov ds,bx				;★用到了数据标号，数据段和代码段对齐，方便调用 show_str 子程序★
-	mov bx,0				;偏移量初始化
-	
-	call screen_clear		;清屏
-menus:
-	;以下用 0,2,4,6 作为相对于 line 的偏移，取得对应的字符串的偏移地址，放在 bx 中
-	mov si,linelabel[bx]	;等价于 mov si,cs:[linelabel+bx]
-	call show_str
-	add bx,2				;移动到下一 line
-	add dh,2				;下移 2 行开始打印
-	cmp bx,6
-	jna menus				;重复此过程，直至打印完四行
-menuout:
-	pop bx
-	pop dx
-	pop si
-	pop ds
-	pop es
-	ret
-;------------------------------------------------------------------------
-;名称：setscreen
-;功能：调用菜单栏目对应功能  
-;参数：扫描码-功能号(ah)
-;返回：无  
-;------------------------------------------------------------------------
-setscreen: 
-	jmp short set
-	table dw 0,reset_pc,start_system,clock,set_clock	;预留 0 号位，方便和按键对应
-set:
-	push bx
-	push ax
-	sub al,30h				;将 int 16h 传递的 al 中的 ASCII 码转化为数值
-	cmp al,4 				;判断按键是否大于 4
-	ja setret
-	mov bl,al
-	mov bh,0
-	add bx,bx 				;根据 ah 中的功能号计算对应子程序在 table 表中的偏移，偏移量为 1 个字
-	call word ptr table[bx] ;调用对应的功能子程序
-setret:
-	pop ax
-	pop bx
-	ret
-;------------------------------------------------------------------------
-;名称：reset_pc
-;功能：重启 pc 机
-;参数：扫描码-功能号(ah)
-;返回：无  
-;------------------------------------------------------------------------
-reset_pc:
-	mov ax,0ffffH
-	push ax
-	mov ax,0H
-	push ax
-	retf
-;------------------------------------------------------------------------
-;名称：start_system
-;功能：引导现有操作系统
-;参数：扫描码-功能号(ah)
-;返回：无  
-;------------------------------------------------------------------------
-start_system:
-	mov ax,0
-	mov es,ax
-	mov bx,7c00h	;es:bx 指向将写入磁盘的数据
+(2) 写一个程序 b.c:
 
-	mov al,1		;(al)写入扇区数
-	mov ch,0		;(ch)磁道号
-	mov cl,1		;(cl)扇区号
-	mov dl,80h		;(dl)驱动器号，80h 为 C 盘
-	mov dh,0		;(dh)面号
+```c
+void showchar(int,int,...);
 
-	mov ah,2		;int 13h 的功能号(2 表示读扇区)
-	int 13h
-	
-	mov ax,0
-	push ax
-	mov ax,7c00h
-	push ax
-	retf				;将 CS:IP 指向 0:7c00
-;------------------------------------------------------------------------
-;名称：clock(动态显示 + 热键控制)
-;功能：显示当前日期、时间，显示格式:年/月/日 时:分:秒
-;参数：扫描码-功能号(ah)，ESC 退出，F1 改变颜色
-;返回：无  
-;------------------------------------------------------------------------
-clock:
-	jmp short clock_in
-	format db 'YY/MM/DD HH:MM:SS',0 ;日期、时间字符串模板
-	unit_num db 9,8,7,4,2,0			;要读取的单元号
-clock_in:
-	push bp
-	push si
-	push ds
-	push dx
-	push cx
-	push bx
-	push ax
-	call screen_clear		;清屏
-clock_ini:
-	mov ax,cs
-	mov ds,ax				;★用到了数据标号，将数据段和代码段对齐★
-	mov si,0				;单元号数据标号步进变量 si
-	mov bx,0				;字符串数据标号步进变量 bx
-clock_show:
-	mov al,unit_num[si]		;从数据标号处取得单元号
-	out 70h,al				;地址端口写入单元号
-	in al,71h				;数据端口读取单元号
-	
-	mov ah,al				;ah 存放单元号中的内容
-	mov cl,4
-	shr al,cl				;al 取得十位
-	and ah,00001111b		;ah 取得个位
-	
-	add ax,3030h				;(个位|十位 h)转换为字符
-	mov word ptr format[bx],ax	;写回字符串
-	inc si						;指向下一个单元
-	add bx,3					;指向字符串下一个写入位置
-	
-	cmp si,6
-	jnb clock_ret
-	jmp clock_show
-clock_ret:
-	mov si,offset format	;指向日期/时间字符串位置
-	mov dh,12	
-	mov dl,31				;12 行 31 列居中显示
-	mov bp,sp
-	mov cx,[bp+4]			;取得字符颜色
-	call show_str			;显示字符串
-	
-	mov ah,1				;1 号功能：查询键盘缓冲区，对键盘进行扫描但不等待，并设置标志寄存器中的 ZF
-	int 16h					;ZF=0，表示有键盘操作，AL 中存放当前输入的 ASCII 码，AH 存放输入字符的扩展码
-	je short clock_ini		;若 ZF=1，表示无键盘输入，则循环读取(可以省去 cmp 步骤，因为本质上 je 就是查 ZF)
-	
-	mov ah,0				;0 号功能：从键盘读数据并存于 al 中
-	int 16h	
-	cmp ah,1				;按下 ESC 键退出
-	je clock_out
-	cmp ah,3bH				;按下 F1 键改变颜色
-	jne short clock_ini		;其他按键也是继续循环
-	inc word ptr [bp+4]		;改变字符颜色属性
-	and word ptr [bp+4],07H	;改变前景色
-	jmp short clock_ini
-clock_out:
-	pop ax
-	pop bx
-	pop cx
-	pop dx
-	pop ds
-	pop si
-	pop bp
-	ret
-;------------------------------------------------------------------------
-;名称：set_clock
-;功能：修改当前日期、时间，显示格式:YYMMDDHHMMSS
-;参数：扫描码-功能号(ah)，键盘输入日期、时间
-;返回：无
-;------------------------------------------------------------------------
-set_clock:
-	push di
-	push bx
-	push ax
-	call screen_clear		;清屏
-	call getstr
-	mov di,5
-	mov ah,1		;结束符 0 出栈
-	call charstack
-setclock_in:
-	mov ah,1		;出栈功能号 1
-	call charstack 	;字符出栈，输出内容到 al
-	sub al,30h		;个位 ASCII 码转换为 BCD 码
-	mov bl,al		;低 4 位暂存个位 al
-	
-	mov ah,1
-	call charstack
-	sub al,30h
-	shl al,1
-	shl al,1
-	shl al,1
-	shl al,1
-	or bl,al		;高 4 位再存十位
-	
-	mov al,unit_num[di]
-	out 70h,al
-	mov al,bl
-	out 71h,al
-	
-	cmp di,0
-	je setclock_ret
-	dec di
-	jmp setclock_in
-setclock_ret:
-	pop ax
-	pop bx
-	pop di
-	ret
-;------------------------------------------------------------------------
-;子程序：接收字符串输入的子程序 getstr
-;参数说明：(ah)=功能号，0 表示入栈，1 表示出栈，2 表示显示；
-;返回：无；
-;ds:si 指向字符栈空间；
-;------------------------------------------------------------------------
-getstr:
-	push ax
-getstrs:
-	mov ah,0
-	int 16h			;读取缓冲区的字符
-	cmp al,20h
-	jb nochar 		;ASCII 码小于 20h，说明不是字符
-	mov ah,0
-	call charstack 	;字符入栈
-	mov ah,2
-	call charstack 	;显示栈中的字符
-	jmp getstrs
-nochar:
-	cmp ah,0eh		;退格键的扫描码
-	je backspace 	
-	cmp ah,1ch		;Enter 键的扫描码
-	je enter 		
-	jmp getstrs
-backspace:
-	mov ah,1
-	call charstack 	;字符出栈
-	mov ah,2
-	call charstack 	;显示栈中的字符
-	jmp getstrs
-enter:
-	mov al,0
-	mov ah,0
-	call charstack 	;0 入栈，作为字符串结尾
-	mov ah,2
-	call charstack 	;显示栈中的字符
-	pop ax
-	ret
-;------------------------------------------------------------------------
-;子程序：字符栈 charstack 的入栈、出栈和显示 
-;参数说明：(ah)=功能号，0 表示入栈，1 表示出栈，2 表示显示；
-;ds:si 指向字符栈空间；
-;对于 0 号功能：(al)=入栈字符；
-;对于 1 号功能：(al)=返回的字节；
-;对于 2 号功能：(dh)、(dl)=字符串在屏幕上显示的行、列位置。
-;------------------------------------------------------------------------
-charstack:
-	jmp short charstart
-	subfun dw charpush,charpop,charshow
-	top dw 0							;栈顶
-charstart: 
-	push bx
-	push dx
-	push di
-	push es
+main()
+{
+	showchar(8,2,'a','b','c','d','e','f','g','h');
+}
 
-	cmp ah,2				;功能号超出范围则跳出程序
-	ja sret
-	mov bl,ah				;bx 读取数据标号偏移量 = 功能号*2
-	mov bh,0
-	add bx,bx				
-	jmp word ptr subfun[bx]	;跳转执行子程序
-charpush:
-	mov bx,top				;从 top 位置开始入栈
-	mov [si][bx],al			;等价于 mov [si+bx],al
-	inc top					;先入栈，再 top++ 说明 top 指向的是栈顶元素后一个位置
-	jmp sret
-charpop:
-	cmp top,0				;检测是否为空，空则退出
-	je sret
-	dec top					;top 指针先减少，指向栈顶元素后再出栈
-	mov bx,top
-	mov al,[si][bx]			;al 存放字符栈弹出的元素
-	jmp sret
-charshow:
-	mov bx,0b800h
-	mov es,bx
-	mov al,160
-	mov ah,0
-	mul dh
-	mov di,ax
-	add dl,dl
-	mov dh,0
-	add di,dx					;计算显示字符偏移量 行×160+列×2
-
-	mov bx,0
-charshows: 
-	cmp bx,top					;检查栈是否为空
-	jne noempty
-	mov byte ptr es:[di],' '
-	jmp sret					;若为空，则打印空格符(下一个字符位置清屏)后退出
-noempty:
-	mov al,[si][bx]				
-	mov es:[di],al				;不为空则取出栈顶元素并显示
-	mov byte ptr es:[di+2],' '	;下一个字符置为空格(下一个字符位置清屏)
-	inc bx						;移动到下一个元素
-	add di,2					;移动到下一个字符位置
-	jmp charshows
-sret:
-	pop es
-	pop di
-	pop dx
-	pop bx
-	ret
+void showchar(int n,int color,...)
+{
+	int a;
 	
-code ends
-end start
+	for(a=0;a!=n;a++)
+	{
+        *(char far *)(0xb8000000+160*10+80+a+a)=*(int *)(_BP+8+a+a);
+        *(char far *)(0xb8000000+160*10+81+a+a)=color;
+	}
+}
 ```
 
-#### 6.DOS 实模式模拟
+​	分析程序 b.c，深入理解相关的知识。
 
-* 接下来使用 VMware 17 虚拟机中的 FreeDOS 1.3 Floppy Edition 系统来模拟真实的硬件环境。
-* 由于后续有可能会对软盘数据进行修改，以及对系统日期、时间进行修改，所以要对数据进行备份以及设置还原点（可选用 VMware 的拍摄快照功能）
+​	思考：showchar 函数是如何知道要显示多少个字符的？ printf 函数是如何知道有多少个参数的？
 
-* 使用 WINImage 将任务文件的`.exe`可执行文件制作成虚拟软盘文件，后缀为`.flp`或者`.img`。
+答：
 
-* 成功运行！至此，我们实现了第一步，可以在 MS-DOS 系统里面运行任务文件`task.exe`
-  * 此时第二个功能——引导操作系统，还不能正常使用，这是因为虚拟机系统的安全保护机制，我们需要安装程序到软盘扇区之后就可以正常运行了（见之后的演示）。
+​	①传递给 showchar() 的第一个参数就是循环次数，决定了显示多少个字符。
 
-* 接下来我们要实现第二步，将程序安装至软盘并任务程序实现开机自启动
+​	② printf 函数通过`cmp al,25`+ je 比较条件跳转指令，比较“%”个数来判断参数个数并处理。
 
-#### 7.程序安装与开机自启动
+(3) 实现一个简单的 printf 函数，只需要支持 “%c、%d” 即可。
 
-* 阅读材料可知，要想实现程序开机自启动，需要将任务程序写到软盘的 0 道 0 面 1 扇区，但是我们的任务程序大小为 1200Byte 大于 1 个扇区 512 字节，所以要用 3 个扇区存放，而 1 扇区的程序负责引导 CPU 将其他扇区内容读入内存。
-* 开机自动转向 0:7c00H 处加载软盘 0 道 0 面 1 扇区的内容，长度为 512(200H) 字节，计算出末地址为 0:7dffH，额外预留 256(100H) 字节给系统栈空间（防止产生冲突），因此任务程序可以被加载到 0:7f00H 处
+分析：
 
-| **程序类型** | **安装位置**              | **执行功能**                       |
-| ------------ | ------------------------- | ---------------------------------- |
-| 安装程序     | 无                        | 将引导程序和任务程序安装到软盘     |
-| 引导程序     | 软盘 0 道 0 面 1 扇区     | 将任务程序载入内存，跳转到任务程序 |
-| 任务程序     | 软盘 0 道 0 面 2 扇区开始 | 执行任务                           |
+​	① 根据 cmp al,'%' 判断参数个数
 
-* 目前确定任务程序要被安装到 0:7f00H 处，所以使用 org 标号防止编译后标号地址错乱。
+​	② 字符型直接送至显存空间显示
 
-```assembly
-assume cs:code
-
-code segment
-start:
-	mov ax,cs
-	mov es,ax
- 
-	mov bx,offset lead 	;将引导程序写入软盘 0 道 0 面 1 扇区
-	mov al,1 			;操作扇区数量
-	mov ah,3 			;写入操作
-	mov dl,0 			;驱动器号：软驱 A
-	mov dh,0 			;面号
-	mov ch,0 			;磁道号
-	mov cl,1 			;扇区号
-	int 13H
- 
-	mov bx,offset main_ini 	;将主程序写入软盘 0 道 0 面 2 扇区开始的 3 个扇区
-	mov al,3 				;操作扇区数量
-	mov ah,3 				;写入操作
-	mov dl,0 				;驱动器号 软驱A
-	mov dh,0 				;面号
-	mov ch,0 				;磁道号
-	mov cl,2 				;扇区号
-	int 13H
- 
-	mov ax,4c00H
-	int 21H
-lead: 					;引导程序，被保存在软盘 0 道 0 面 1 扇区，由操作系统加载到 0:7c00H 处，
-						;负责被加载后从 0 道 0 面 2 扇区开始的 3 个扇区加载主程序
-	mov ax,0
-	mov ss,ax
-	mov sp,7f00H 		;0:7e00H 到 0:7f00H 是安全的栈空间
-	
-	mov ax,cs
-	mov es,ax
-	mov bx,7f00H 		;es:bx 指向接收从扇区读入数据的内存区，将主程序加载到 0:7f00H 处
- 
-	mov al,3 			;操作扇区数量
-	mov ah,2 			;读取操作
-	mov dl,0 			;驱动器号 软驱 A
-	mov dh,0 			;面号
-	mov ch,0 			;磁道号
-	mov cl,2 			;扇区号
-	int 13H
- 
-	mov ax,0
-	push ax
-	mov ax,7f00h
-	push ax
-	retf				;将 CS:IP 指向 0:7f00
- 
-	org 7f00H 			;防止数据标号错乱
-main_ini:
-	jmp short main
-	data segment
-    	db 32 dup (0)		;日期/时间数据存放区，输入格式：YYMMDDHHMMSS
-	data ends
-	stack segment stack
-		db 32 dup (0)
-	stack ends
-main:
-	mov dh,8
-	mov dl,32
-	mov ax,data
-	mov ds,ax
-	mov cx,7
-	call menu
-
-	mov ah,0
-	int 16h
-	call setscreen
-	
-	jmp short main
-	mov ax,4c00h
-	int 21h
-;------------------------------------------------------------------------
-;名称：show_str  
-;功能：在指定的位置，用指定的颜色，显示一个用 0 结束的字符串。  
-;参数：(dh)=行号(取值范围 0~24)，(dl)=列号(取值范围 0~79)，(cl)=颜色，ds:si 指向字符串的首地址  
-;返回：无  
-;------------------------------------------------------------------------
-show_str:
-	push si
-	push dx
-	push cx			
-	push bx
-	push ax
-	
-	mov ax,0B800H	
-	mov es,ax		;es 关联显存区
-	mov bx,0		;偏移地址 bx 初始化为 0
-	
-	mov al,00A0H	;行偏移计算，只需要 8 位乘法
-	mul dh
-	add bx,ax		;不用特殊处理 ah，因为 8 位乘法结果直接覆盖 ax
-	
-	mov al,0002H	;列偏移计算，只需要 8 位乘法
-	mul dl
-	add bx,ax
-	
-	mov al,cl		;暂存颜色属性
-show_core:			;打印字符核心代码
-	mov cl,[si]		;先判断是否以 0 结束
-	mov ch,0
-	jcxz show_out
-
-	mov es:[bx],cl		;字符写入显存区偶数位
-	mov es:[bx+1],al	;字符属性写入显存区奇数位
-	
-	inc si				;处理数据区下一个字符
-	add bx,2			;一次循环写入显存区两个字节
-	jmp short show_core
-show_out:
-	pop ax
-	pop bx
-	pop cx
-	pop dx
-	pop si
-	ret
-;------------------------------------------------------------------------
-;名称：screen_clear
-;功能：全屏幕字符用空格填充，而字符颜色属性保持不变。  
-;参数：无
-;返回：无  
-;------------------------------------------------------------------------
-screen_clear:
-	push bx
-	push cx
-	push es			;保护现场
-	mov bx,0b800h
-	mov es,bx		;es 设置为显存地址
-	mov bx,0
-	mov cx,2000		;全屏幕 25 行 × 80 列
-screen_clears:
-	mov byte ptr es:[bx],' '	;当前字符置为空格
-	add bx,2					;下一个字符地址
-	loop screen_clears
-	pop es						;恢复现场
-	pop cx
-	pop bx
-	ret
-;------------------------------------------------------------------------
-;名称：menu
-;功能：显示菜单栏目  
-;参数：(dh)=行号(取值范围 0~24)，(dl)=列号(取值范围 0~79)，(cl)=颜色
-;返回：无  
-;------------------------------------------------------------------------
-menu:
-	jmp short menu_show
-	
-	linelabel dw line1,line2,line3,line4
-	line1 db '1)reset pc',0
-	line2 db '2)start system',0
-	line3 db '3)clock',0
-	line4 db '4)set clock',0
-menu_show: 
-	push es
-	push ds
-	push si
-	push dx
-	push bx
-	mov bx,cs
-	mov ds,bx				;★用到了数据标号，数据段和代码段对齐，方便调用 show_str 子程序★
-	mov bx,0				;偏移量初始化
-	
-	call screen_clear		;清屏
-menus:
-	;以下用 0,2,4,6 作为相对于 line 的偏移，取得对应的字符串的偏移地址，放在 bx 中
-	mov si,linelabel[bx]	;等价于 mov si,cs:[linelabel+bx]
-	call show_str
-	add bx,2				;移动到下一 line
-	add dh,2				;下移 2 行开始打印
-	cmp bx,6
-	jna menus				;重复此过程，直至打印完四行
-menuout:
-	pop bx
-	pop dx
-	pop si
-	pop ds
-	pop es
-	ret
-;------------------------------------------------------------------------
-;名称：setscreen
-;功能：调用菜单栏目对应功能  
-;参数：扫描码-功能号(ah)
-;返回：无  
-;------------------------------------------------------------------------
-setscreen: 
-	jmp short set
-	table dw 0,reset_pc,start_system,clock,set_clock	;预留 0 号位，方便和按键对应
-set:
-	push bx
-	push ax
-	sub al,30h				;将 int 16h 传递的 al 中的 ASCII 码转化为数值
-	cmp al,4 				;判断按键是否大于 4
-	ja setret
-	mov bl,al
-	mov bh,0
-	add bx,bx 				;根据 ah 中的功能号计算对应子程序在 table 表中的偏移，偏移量为 1 个字
-	call word ptr table[bx] ;调用对应的功能子程序
-setret:
-	pop ax
-	pop bx
-	ret
-;------------------------------------------------------------------------
-;名称：reset_pc
-;功能：重启 pc 机
-;参数：扫描码-功能号(ah)
-;返回：无  
-;------------------------------------------------------------------------
-reset_pc:
-	mov ax,0ffffH
-	push ax
-	mov ax,0H
-	push ax
-	retf
-;------------------------------------------------------------------------
-;名称：start_system
-;功能：引导现有操作系统
-;参数：扫描码-功能号(ah)
-;返回：无  
-;------------------------------------------------------------------------
-start_system:
-	mov ax,0
-	mov es,ax
-	mov bx,7c00h	;es:bx 指向将写入磁盘的数据
-
-	mov al,1		;(al)写入扇区数
-	mov ch,0		;(ch)磁道号
-	mov cl,1		;(cl)扇区号
-	mov dl,80h		;(dl)驱动器号，80h 为 C 盘
-	mov dh,0		;(dh)面号
-
-	mov ah,2		;int 13h 的功能号(2 表示读扇区)
-	int 13h
-	
-	mov ax,0
-	push ax
-	mov ax,7c00h
-	push ax
-	retf				;将 CS:IP 指向 0:7c00
-;------------------------------------------------------------------------
-;名称：clock(动态显示 + 热键控制)
-;功能：显示当前日期、时间，显示格式:年/月/日 时:分:秒
-;参数：扫描码-功能号(ah)，ESC 退出，F1 改变颜色
-;返回：无  
-;------------------------------------------------------------------------
-clock:
-	jmp short clock_in
-	format db 'YY/MM/DD HH:MM:SS',0 ;日期、时间字符串模板
-	unit_num db 9,8,7,4,2,0			;要读取的单元号
-clock_in:
-	push bp
-	push si
-	push ds
-	push dx
-	push cx
-	push bx
-	push ax
-	call screen_clear		;清屏
-clock_ini:
-	mov ax,cs
-	mov ds,ax				;★用到了数据标号，将数据段和代码段对齐★
-	mov si,0				;单元号数据标号步进变量 si
-	mov bx,0				;字符串数据标号步进变量 bx
-clock_show:
-	mov al,unit_num[si]		;从数据标号处取得单元号
-	out 70h,al				;地址端口写入单元号
-	in al,71h				;数据端口读取单元号
-	
-	mov ah,al				;ah 存放单元号中的内容
-	mov cl,4
-	shr al,cl				;al 取得十位
-	and ah,00001111b		;ah 取得个位
-	
-	add ax,3030h				;(个位|十位 h)转换为字符
-	mov word ptr format[bx],ax	;写回字符串
-	inc si						;指向下一个单元
-	add bx,3					;指向字符串下一个写入位置
-	
-	cmp si,6
-	jnb clock_ret
-	jmp clock_show
-clock_ret:
-	mov si,offset format	;指向日期/时间字符串位置
-	mov dh,12	
-	mov dl,31				;12 行 31 列居中显示
-	mov bp,sp
-	mov cx,[bp+4]			;取得字符颜色
-	call show_str			;显示字符串
-	
-	mov ah,1				;1 号功能：查询键盘缓冲区，对键盘进行扫描但不等待，并设置标志寄存器中的 ZF
-	int 16h					;ZF=0，表示有键盘操作，AL 中存放当前输入的 ASCII 码，AH 存放输入字符的扩展码
-	je short clock_ini		;若 ZF=1，表示无键盘输入，则循环读取(可以省去 cmp 步骤，因为本质上 je 就是查 ZF)
-	
-	mov ah,0				;0 号功能：从键盘读数据并存于 al 中
-	int 16h	
-	cmp ah,1				;按下 ESC 键退出
-	je clock_out
-	cmp ah,3bH				;按下 F1 键改变颜色
-	jne short clock_ini		;其他按键也是继续循环
-	inc word ptr [bp+4]		;改变字符颜色属性
-	and word ptr [bp+4],07H	;改变前景色
-	jmp short clock_ini
-clock_out:
-	pop ax
-	pop bx
-	pop cx
-	pop dx
-	pop ds
-	pop si
-	pop bp
-	ret
-;------------------------------------------------------------------------
-;名称：set_clock
-;功能：修改当前日期、时间，显示格式:YYMMDDHHMMSS
-;参数：扫描码-功能号(ah)，键盘输入日期、时间
-;返回：无
-;------------------------------------------------------------------------
-set_clock:
-	push di
-	push bx
-	push ax
-	call screen_clear		;清屏
-	call getstr
-	mov di,5
-	mov ah,1		;结束符 0 出栈
-	call charstack
-setclock_in:
-	mov ah,1		;出栈功能号 1
-	call charstack 	;字符出栈，输出内容到 al
-	sub al,30h		;个位 ASCII 码转换为 BCD 码
-	mov bl,al		;低 4 位暂存个位 al
-	
-	mov ah,1
-	call charstack
-	sub al,30h
-	shl al,1
-	shl al,1
-	shl al,1
-	shl al,1
-	or bl,al		;高 4 位再存十位
-	
-	mov al,unit_num[di]
-	out 70h,al
-	mov al,bl
-	out 71h,al
-	
-	cmp di,0
-	je setclock_ret
-	dec di
-	jmp setclock_in
-setclock_ret:
-	pop ax
-	pop bx
-	pop di
-	ret
-;------------------------------------------------------------------------
-;子程序：接收字符串输入的子程序 getstr
-;参数说明：(ah)=功能号，0 表示入栈，1 表示出栈，2 表示显示；
-;返回：无；
-;ds:si 指向字符栈空间；
-;------------------------------------------------------------------------
-getstr:
-	push ax
-getstrs:
-	mov ah,0
-	int 16h			;读取缓冲区的字符
-	cmp al,20h
-	jb nochar 		;ASCII 码小于 20h，说明不是字符
-	mov ah,0
-	call charstack 	;字符入栈
-	mov ah,2
-	call charstack 	;显示栈中的字符
-	jmp getstrs
-nochar:
-	cmp ah,0eh		;退格键的扫描码
-	je backspace 	
-	cmp ah,1ch		;Enter 键的扫描码
-	je enter 		
-	jmp getstrs
-backspace:
-	mov ah,1
-	call charstack 	;字符出栈
-	mov ah,2
-	call charstack 	;显示栈中的字符
-	jmp getstrs
-enter:
-	mov al,0
-	mov ah,0
-	call charstack 	;0 入栈，作为字符串结尾
-	mov ah,2
-	call charstack 	;显示栈中的字符
-	pop ax
-	ret
-;------------------------------------------------------------------------
-;子程序：字符栈 charstack 的入栈、出栈和显示 
-;参数说明：(ah)=功能号，0 表示入栈，1 表示出栈，2 表示显示；
-;ds:si 指向字符栈空间；
-;对于 0 号功能：(al)=入栈字符；
-;对于 1 号功能：(al)=返回的字节；
-;对于 2 号功能：(dh)、(dl)=字符串在屏幕上显示的行、列位置。
-;------------------------------------------------------------------------
-charstack:
-	jmp short charstart
-	subfun dw charpush,charpop,charshow
-	top dw 0							;栈顶
-charstart: 
-	push bx
-	push dx
-	push di
-	push es
-
-	cmp ah,2				;功能号超出范围则跳出程序
-	ja sret
-	mov bl,ah				;bx 读取数据标号偏移量 = 功能号*2
-	mov bh,0
-	add bx,bx				
-	jmp word ptr subfun[bx]	;跳转执行子程序
-charpush:
-	mov bx,top				;从 top 位置开始入栈
-	mov [si][bx],al			;等价于 mov [si+bx],al
-	inc top					;先入栈，再 top++ 说明 top 指向的是栈顶元素后一个位置
-	jmp sret
-charpop:
-	cmp top,0				;检测是否为空，空则退出
-	je sret
-	dec top					;top 指针先减少，指向栈顶元素后再出栈
-	mov bx,top
-	mov al,[si][bx]			;al 存放字符栈弹出的元素
-	jmp sret
-charshow:
-	mov bx,0b800h
-	mov es,bx
-	mov al,160
-	mov ah,0
-	mul dh
-	mov di,ax
-	add dl,dl
-	mov dh,0
-	add di,dx					;计算显示字符偏移量 行×160+列×2
-
-	mov bx,0
-charshows: 
-	cmp bx,top					;检查栈是否为空
-	jne noempty
-	mov byte ptr es:[di],' '
-	jmp sret					;若为空，则打印空格符(下一个字符位置清屏)后退出
-noempty:
-	mov al,[si][bx]				
-	mov es:[di],al				;不为空则取出栈顶元素并显示
-	mov byte ptr es:[di+2],' '	;下一个字符置为空格(下一个字符位置清屏)
-	inc bx						;移动到下一个元素
-	add di,2					;移动到下一个字符位置
-	jmp charshows
-sret:
-	pop es
-	pop di
-	pop dx
-	pop bx
-	ret
-	
-code ends
-end start
-```
-
-* 编译、连接上述程序，此时可执行文件`tasksr.exe`会比之前任务程序`task.exe`大很多，这是正常现象。
-* 用 WinImage 将`tasksr.exe`制作成软盘 .flp 文件，然后插入虚拟机的软盘 B，切换到 b: 盘执行安装程序。
-* 重新开机发现开机自动执行了我们的任务程序（而且此时软盘 A 已经被修改！注意之前提过的备份）
-* 功能一：重启 PC，实现成功！（蓝色的圆形色块是录屏软件产生的，请忽略。）
-
-![17.4.6 重启 pc 示意图](文档插图/17.4.6 重启 pc 示意图.gif)
-
-<center style="color:#C0C0C0">图 17.4.6 重启 pc 示意图</center>
-
-* 功能二：引导现有操作系统功能正常执行，如下
-
-![17.4.7 引导现有操作系统示意图](文档插图/17.4.7 引导现有操作系统示意图.gif)
-
-<center style="color:#C0C0C0">图 17.4.7 引导现有操作系统示意图</center>
-
-* 功能三：查看时钟及热键控制功能正常执行，F1 换色、ESC 键退回主菜单，如下：
-
-![17.4.8 查看时钟以及热键控制示意图](文档插图/17.4.8 查看时钟以及热键控制示意图.gif)
-
-<center style="color:#C0C0C0">图 17.4.8 查看时钟以及热键控制示意图</center>
-
-* 功能四：更改当前日期、时间功能正常运行，修改完重新进入时钟页面，发现仍是修改后的值，证明是真正修改了 CMOS 里的数据单元。
-
-![17.4.9 更改当前日期、时间示意图](文档插图/17.4.9 更改当前日期、时间示意图.gif)
-
-<center style="color:#C0C0C0">图 17.4.9 更改当前日期、时间示意图</center>
-
-#### 8.总结
-
-* 至此，完成了课程设计 2 中的所有内容，完结撒花～(∠・ω< )⌒🏵
-* 本课程设计的完结，也标志着该门课程接近尾声，后续还有一点收尾内容会另起一章说明。该课程设计属于本课程门槛最高的内容，需要对之前学过的相关内容熟悉，并且举一反三，才能够编写出符合要求的程序，通过本课程设计的研究反过来也可以促进知识的融会贯通，而且加深理解，明白知易行难的道理。
-* 学习了利用 VMware + MS-DOS 模拟真实实模式 DOS 汇编环境，由于汇编语言年代久远了，所以搭建这个仿真的 DOS 环境也是有不小的门槛的，可以参见网络上有关教程。相应的 Free-DOS 系统、虚拟软盘文件、可执行文件等内容，我也会放在第 17 章课程设计 2 相关文件夹下。
-* 本课程设计 2 贯彻落实了本书提到的“**知识屏蔽**”学习方法，而且出于规范考虑，本课程设计中绝大多数程序都是基于之前学习过的程序改写而成的，所以没有多余的个性化内容，有兴趣可以自行完善。
-* 提醒：由于课程设计程序进行了多次修改，可能出现本文程序内容和对应编译文本 .asm 文件出现细微差别的问题，出于保留思考痕迹的考虑以及有可能没有将对应部分完全修改，最终以笔记内的程序为准，可以方便的使用 MASM 重新编译、连接成可执行文件。
+​	③ 整形需要用之前提到的整数分解转换为字符串的技巧化成字符型，然后再进行步骤②
